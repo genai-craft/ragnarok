@@ -5,7 +5,7 @@
 **ベクトル × 目次の木 × 遅延グラフ × 校正された確率判定。GPU 1 枚、全部ローカル。**
 [openvons](https://github.com/genai-craft/openvons) (有限候補に確率で答える判定エンジン、Jev 型の校正済み選択) の上に作っています。
 
-**デモ: https://ragnarok.openvons.com** · 動画 (2 分 40 秒、日本語ナレーション・字幕): [デモサイトの mp4](https://ragnarok.openvons.com/static/ragnarok_demo.mp4) · [リリース添付](https://github.com/genai-craft/ragnarok/releases/latest)
+**デモ: https://ragnarok.openvons.com** · 動画 (2 分 40 秒、日本語ナレーション・字幕): [デモサイトの mp4](https://ragnarok.openvons.com/static/ragnarok_demo_v2.mp4) · [リリース添付](https://github.com/genai-craft/ragnarok/releases/latest)
 
 ![ragnarok デモ: 確率判定 2 段、棄却、網羅](docs/img/demo.gif)
 

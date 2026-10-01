@@ -10,7 +10,10 @@ EMOTION = {"title": "力強く、わくわくした調子で宣言するよう�
 out = []
 for i, l in enumerate(json.load(open(f"{V}/script.json"))):
     f = f"nar_{i:02d}_{l['scene']}.wav"
-    body = {"text": l["text"], "caption": BASE + EMOTION.get(l["scene"], ""), "ref_wav": REF, "seed": 7, "num_steps": 40}
+    # 感情 caption を場面ごとに変えると声そのものが変わって聞こえる (話者類似度は 0.95 でも調子が別人) → 既定は参照音声 + 同じ caption で統一。
+    # RAGNAROK_EMOTION=1 で場面ごとの感情 caption を使う
+    cap = BASE + (EMOTION.get(l["scene"], "") if os.environ.get("RAGNAROK_EMOTION") == "1" else "少し楽しそうな明るい調子で、一定のテンポ")
+    body = {"text": l["text"], "caption": cap, "ref_wav": REF, "seed": 7, "num_steps": 40}
     subprocess.run(["curl", "-s", "-m", "180", "-X", "POST", TTS, "-H", "Content-Type: application/json", "-d", json.dumps(body, ensure_ascii=False), "-o", f"{V}/{f}"], check=True)
     with wave.open(f"{V}/{f}") as w: dur = w.getnframes() / w.getframerate()
     out.append({**l, "file": f, "dur": round(dur, 2)}); print(l["scene"], round(dur, 1), "s")

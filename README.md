@@ -5,7 +5,7 @@
 **Vector × tree × graph-lite × calibrated decisions. Fully local (one GPU).**
 Built on [openvons](https://github.com/genai-craft/openvons), the finite-candidate decision engine (Jev-style calibrated choices).
 
-**Live demo: https://ragnarok.openvons.com** · Full video (2.7 min, Japanese narration & subtitles): [mp4 on the demo site](https://ragnarok.openvons.com/static/ragnarok_demo.mp4) · [release asset](https://github.com/genai-craft/ragnarok/releases/latest)
+**Live demo: https://ragnarok.openvons.com** · Full video (2.7 min, Japanese narration & subtitles): [mp4 on the demo site](https://ragnarok.openvons.com/static/ragnarok_demo_v2.mp4) · [release asset](https://github.com/genai-craft/ragnarok/releases/latest)
 
 ![ragnarok demo: 2-stage probability decisions, abstention, sweep](docs/img/demo.gif)
 

@@ -52,6 +52,8 @@ Coverage — "all pages that discuss X" (6 filings × 8 topics, oracle = 27B pag
 
 Full tables, what did *not* work (tree navigation on 10-Ks, distilling the re-ranker into a 4B head), and the qualitative comparison with GraphRAG / PageIndex / vector RAG: [docs/comparison.md](docs/comparison.md), [bench/README.md](bench/README.md).
 
+Japanese securities reports (EDINET, 10 companies × 26 fiscal years, 130 synthetic questions): vector hit@5 0.78 → 2-stage decisions **0.82**, answer accuracy **0.88** (27B thinking). Details in [bench/README.md](bench/README.md).
+
 ## How it works
 
 ```
@@ -94,7 +96,7 @@ Smaller setups: the 4B alone works for everything (re-rank hit@5 0.77 instead of
 
 - The tree is a helper, not the core: on FinanceBench-type questions (numbers inside tables) tree navigation lost to embeddings, even with LLM summaries on every node. It stays for structure-heavy documents (laws, contracts) and is measured separately.
 - Relation questions ("who is connected to X") are not measured; coverage/aggregation is. A lazy graph (edges verified by decisions at query time) is the plan.
-- Japanese works end-to-end (demo includes a Japanese white paper); Japanese benchmarks are coming (EDINET securities reports).
+- Japanese works end-to-end (demo includes 26 EDINET securities reports and a government white paper); the Japanese QA set is synthetic (questions generated from the evidence page) and easier than FinanceBench.
 
 ## License
 

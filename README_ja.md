@@ -54,6 +54,8 @@ FinanceBench 公開セット (150 問、10-K 84 冊 12,013 ページ)。回答�
 
 全部の表、うまくいかなかったこと (10-K での木の探索、4B への rerank 蒸留)、GraphRAG / PageIndex / ベクトル RAG との向き不向き: [docs/comparison.md](docs/comparison.md)、[bench/README.md](bench/README.md)。
 
+日本語の有価証券報告書 (EDINET、10 社 26 期、130 問の合成 QA): ベクトル hit@5 0.78 → 確率判定 2 段 **0.82**、回答正解率 **0.88** (27B 思考あり)。詳細は [bench/README.md](bench/README.md)。
+
 ## しくみ
 
 ```
@@ -95,7 +97,7 @@ python -m examples.demo.server --port 8608     # Web デモ
 
 - 木は補助であって中核ではない: FinanceBench 型 (表の中の数値) では、全ノードに LLM 要約を付けても木の探索は埋め込みに負けた。構造が重い文書 (法令・契約) 向けに残し、別に測る
 - 関係の質問 (「X と繋がる人物は」) は未測定。網羅・集約は測った。質問時に判定でエッジを確かめる遅延グラフが次の計画
-- 日本語は端から端まで動く (デモに情報通信白書を同梱)。日本語ベンチ (EDINET の有価証券報告書) はこれから
+- 日本語は端から端まで動く (デモに EDINET の有報 26 期と情報通信白書を同梱)。日本語 QA は出典ページから生成した合成問題で、FinanceBench より易しい
 
 ## ライセンス
 

@@ -2,7 +2,7 @@
 import asyncio, json, os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import httpx
-from jevrag.tree import Doc
+from ragnarok.tree import Doc
 FB = "/data/jev-rag/financebench"; C = httpx.AsyncClient(timeout=300); SEM = asyncio.Semaphore(24)
 async def summ(doc, n):
     body = "\n".join(doc.pages[p] for p in n.own_pages())[:5000]

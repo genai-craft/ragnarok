@@ -2,7 +2,7 @@
 import asyncio, json, os, random, re, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import httpx
-from jevrag.tree import Doc
+from ragnarok.tree import Doc
 random.seed(0)
 DOCS = {"PRML": 60, "Regulation Best Interest_proposed rule": 50, "arxiv_gpt3": 29, "arxiv_llama2": 24, "attention-residuals": 16}
 OUT = "/data/jev-rag/bench/qa.jsonl"; os.makedirs(os.path.dirname(OUT), exist_ok=True)

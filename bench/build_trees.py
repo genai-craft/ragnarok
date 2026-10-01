@@ -1,7 +1,7 @@
 """アウトライン付き PDF から木を作って保存する (LLM なし)。"""
 import sys, os, glob
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from jevrag.tree import tree_from_outline
+from ragnarok.tree import tree_from_outline
 OUT = "/data/jev-rag/trees"; os.makedirs(OUT, exist_ok=True)
 for pdf in sorted(glob.glob("/data/jev-rag/pdfs/*.pdf")):
     name = os.path.basename(pdf)[:-4]

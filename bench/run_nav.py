@@ -4,8 +4,8 @@ import asyncio, json, os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("HF_HUB_CACHE", "/data/openvons/choice_spec/hf_cache")
 from openvons.lm.backends.llm_backend import LLMBackend
-from jevrag.tree import Doc
-from jevrag.navigate import DecisionNavigator, GenerativeNavigator, EmbeddingRetriever, HybridNavigator, RerankRetriever
+from ragnarok.tree import Doc
+from ragnarok.navigate import DecisionNavigator, GenerativeNavigator, EmbeddingRetriever, HybridNavigator, RerankRetriever
 
 QA = [json.loads(l) for l in open("/data/jev-rag/bench/qa.jsonl")]
 DOCS = {n: Doc.load(f"/data/jev-rag/trees/{n}.json") for n in sorted({r["doc"] for r in QA})}

@@ -8,8 +8,8 @@ os.environ.setdefault("HF_HUB_CACHE", "/data/openvons/choice_spec/hf_cache")
 import httpx, numpy as np
 from openvons.core.primitives import Option, Question
 from openvons.lm.backends.llm_backend import LLMBackend
-from jevrag.tree import Doc, Node, tree_from_pageindex, outline_text
-from jevrag.layout import tree_from_layout
+from ragnarok.tree import Doc, Node, tree_from_pageindex, outline_text
+from ragnarok.layout import tree_from_layout
 
 FB = "/data/jev-rag/financebench"
 ROWS = [json.loads(l) for l in open(f"{FB}/repo/data/financebench_open_source.jsonl")]
@@ -136,7 +136,7 @@ def hits_to_pages(hits, k):
     return out[:k]
 
 async def ret_tree_dec(r, backend, which="pi"):
-    from jevrag.navigate import DecisionNavigator
+    from ragnarok.navigate import DecisionNavigator
     t = tree(r["doc_name"]) if which == "pi" else lay(r["doc_name"])
     if t is None: return await ret_emb(r)
     res = await DecisionNavigator(backend, beam=3, topk=K).search(r["question"], t)
@@ -155,7 +155,7 @@ async def ret_hybrid(r, backend, which="lay"):
     return [cand[i] for i in order[:K]], calls + 1
 
 async def ret_tree_gen(r, which="pi"):
-    from jevrag.navigate import GenerativeNavigator
+    from ragnarok.navigate import GenerativeNavigator
     t = tree(r["doc_name"]) if which == "pi" else lay(r["doc_name"])
     if t is None: return await ret_emb(r)
     res = await GenerativeNavigator("http://127.0.0.1:8310/v1", "qwen27b", topk=K).search(r["question"], t)

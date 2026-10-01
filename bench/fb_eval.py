@@ -76,6 +76,15 @@ async def decide_pages(r, backend, cand, t=None):
     dec = (await backend.adecide(f"Document: {d} (an annual 10-K filing of {r['company']})", [q]))[0]
     return dict(zip(cand, [float(x) for x in dec.probs[:-1]]))
 
+async def ret_rerank_mix(r, topn=50, group=25, pool_each=6):
+    """1 段目を 4B (25 ずつ)、最終段だけ 27B。27B 1 回分のコストで 2 段に迫れるか。"""
+    d = r["doc_name"]; s = emb(d) @ qemb(r["question"]); cand = [int(i) for i in np.argsort(-s)[:topn]]
+    pool = []
+    for i in range(0, len(cand), group):
+        sc = await decide_pages(r, B4, cand[i : i + group]); pool += [p for p, _ in sorted(sc.items(), key=lambda x: -x[1])[:pool_each]]
+    sc = await decide_pages(r, B27, pool)
+    return [p for p, _ in sorted(sc.items(), key=lambda x: -x[1])[:K]], 3
+
 async def ret_rerank(r, backend, with_tree=False, topn=10, group=25):
     """埋め込み top-topn → 確率判定で並べ替え。topn > group なら group ずつ採点して各束の上位を集め、もう 1 回採点する (2 段)。"""
     d = r["doc_name"]; s = emb(d) @ qemb(r["question"]); cand = [int(i) for i in np.argsort(-s)[:topn]]
@@ -131,14 +140,16 @@ async def ret_tree_gen(r, which="pi"):
         if len(out) >= K: break
     return out[:K] or (await ret_emb(r))[0], 1
 
-async def chat27(prompt, max_tokens=300):
+THINK = os.environ.get("ANS_THINK", "0") == "1"
+async def chat27(prompt, max_tokens=300, think=False):
     async with SEM27:
-        r = await C27.post("http://127.0.0.1:8310/v1/chat/completions", json={"model": "qwen27b", "messages": [{"role": "user", "content": prompt}], "max_tokens": max_tokens, "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}})
-    return r.json()["choices"][0]["message"]["content"].strip()
+        r = await C27.post("http://127.0.0.1:8310/v1/chat/completions", json={"model": "qwen27b", "messages": [{"role": "user", "content": prompt}], "max_tokens": (int(os.environ.get("ANS_TOKENS", "2500")) if think else max_tokens), "temperature": 0, "chat_template_kwargs": {"enable_thinking": think}})
+    m = r.json()["choices"][0]["message"]; txt = (m.get("content") or "").strip()
+    return txt.split("</think>")[-1].strip() if "</think>" in txt else txt
 
 async def answer(r, pgs):
     d = r["doc_name"]; ctx = "\n\n".join(f"=== page {p+1} ===\n{pages(d)[p][:6000]}" for p in pgs)
-    return await chat27(f"You are a financial analyst. Using only the excerpts below from the 10-K filing of {r['company']} ({d}), answer the question. "
+    return await chat27(think=THINK, prompt=f"You are a financial analyst. Using only the excerpts below from the 10-K filing of {r['company']} ({d}), answer the question. "
                         f"Be concise; give the number with units when the question asks for a number, and show the calculation briefly if needed. If the excerpts do not contain the answer, say \"Not found\".\n\n{ctx}\n\nQuestion: {r['question']}\nAnswer:")
 
 async def judge(r, ans):
@@ -159,6 +170,8 @@ async def run(method):
             elif method == "rerank27b_2st": pgs, calls = await ret_rerank(r, B27, topn=50)
             elif method == "rerank4b_2st": pgs, calls = await ret_rerank(r, B4, topn=50)
             elif method == "rerank27b_2st+tree": pgs, calls = await ret_rerank(r, B27, topn=50, with_tree=True)
+            elif method == "rerank_mix": pgs, calls = await ret_rerank_mix(r)
+            elif method == "rerank27b_3st": pgs, calls = await ret_rerank(r, B27, topn=100, group=25)
             elif method == "rerank27b+tree": pgs, calls = await ret_rerank(r, B27, with_tree=True)
             elif method == "tree_dec27b": pgs, calls = await ret_tree_dec(r, B27)
             elif method == "tree_dec4b": pgs, calls = await ret_tree_dec(r, B4)
@@ -178,9 +191,9 @@ async def run(method):
     res = await asyncio.gather(*[one(r) for r in ROWS]); res = [x for x in res if x]
     n = len(res); by = {}
     for x in res: by.setdefault(x["type"], []).append(x["correct"])
-    print(f"{method:16s} k={K} 根拠 hit@1 {sum(x['hit1'] for x in res)/n:.3f} hit@{K} {sum(x['hit'] for x in res)/n:.3f} 正解率 {sum(x['correct'] for x in res)/n:.3f} n={n} wall {time.time()-t0:.0f}s | "
+    print(f"{method:16s}{' think' if THINK else ''} k={K} 根拠 hit@1 {sum(x['hit1'] for x in res)/n:.3f} hit@{K} {sum(x['hit'] for x in res)/n:.3f} 正解率 {sum(x['correct'] for x in res)/n:.3f} n={n} wall {time.time()-t0:.0f}s | "
           + " ".join(f"{k[:8]}:{sum(v)/len(v):.2f}" for k, v in by.items()), flush=True)
-    json.dump(res, open(f"{FB}/eval_{method}_k{K}.json", "w"), ensure_ascii=False, indent=1)
+    json.dump(res, open(f"{FB}/eval_{method}_k{K}{'_think' if THINK else ''}.json", "w"), ensure_ascii=False, indent=1)
 
 async def main():
     for m in METHODS: await run(m)

@@ -1,0 +1,33 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ragnarok — the last RAG</title><link rel="stylesheet" href="/static/app.css"></head>
+<body>
+<header><div class="brand"><b>ragnarok</b><span class="tag">the last RAG — vector + tree + graph-lite + calibrated decisions, fully local</span></div>
+<nav><a href="https://github.com/genai-craft/ragnarok" target="_blank">GitHub</a><a href="https://openvons.com" target="_blank">openvons</a></nav></header>
+<main>
+<section class="left">
+  <h3>1. 文書</h3>
+  <select id="doc"></select>
+  <label class="upl">PDF をアップロード<input type="file" id="file" accept="application/pdf" hidden></label>
+  <div class="muted small" id="docinfo"></div>
+  <h3>2. 質問</h3>
+  <div class="chips" id="samples"></div>
+  <textarea id="q" rows="3" placeholder="例: What was the total revenue in fiscal 2022? / 2022年度の売上高は？"></textarea>
+  <div class="row"><label><input type="radio" name="mode" value="ask" checked> ピンポイント (答えを探す)</label><label><input type="radio" name="mode" value="sweep"> 網羅 (触れている箇所を全部)</label></div>
+  <div class="row small"><label><input type="checkbox" id="think" checked> 回答は思考あり (27B)</label><label><input type="checkbox" id="fast"> 1 段目を 4B で</label></div>
+  <button id="go" class="go">実行</button> <span class="muted small" id="status"></span>
+  <h3>しくみ</h3>
+  <ol class="how">
+    <li><b>ベクトル検索</b> でページ候補を 50 (埋め込み 0.6B)</li>
+    <li><b>確率判定 1 段目</b>: 25 ページずつ「どのページに答えがあるか」を 1 token で判定 → 各 5 ページ</li>
+    <li><b>最終判定</b>: 残った 10 ページ + 「どれでもない」。どれでもないが 50% を超えたら<b>棄却</b> (この文書には無い)</li>
+    <li><b>回答</b>: 上位ページだけを LLM に渡す。根拠ページ付き</li>
+    <li><b>網羅</b>モードは全ページに yes/no 判定 (4B、1 ページ 25 ms) → 該当箇所を全部 → 要約</li>
+  </ol>
+</section>
+<section class="main">
+  <div id="pipeline"></div>
+  <div id="answer" class="answer" hidden></div>
+</section>
+<aside class="right"><h3>ページ <span id="pno" class="muted"></span></h3><div id="psec" class="muted small"></div><pre id="ptext" class="ptext">左の候補やページ番号をクリックすると本文が出ます。</pre></aside>
+</main>
+<script src="/static/app.js"></script></body></html>

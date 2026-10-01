@@ -7,7 +7,7 @@
 <section class="left">
   <h3>1. 文書</h3>
   <select id="doc"></select>
-  <label class="upl">PDF をアップロード<input type="file" id="file" accept="application/pdf" hidden></label>
+  <label class="upl">ファイルをアップロード (PDF / DOCX / PPTX / HTML / TXT / MD)<input type="file" id="file" accept=".pdf,.docx,.pptx,.html,.htm,.txt,.md" hidden></label>
   <div class="muted small" id="docinfo"></div>
   <h3>2. 質問</h3>
   <div class="chips" id="samples"></div>
@@ -28,6 +28,6 @@
   <div id="pipeline"></div>
   <div id="answer" class="answer" hidden></div>
 </section>
-<aside class="right"><h3>ページ <span id="pno" class="muted"></span></h3><div id="psec" class="muted small"></div><pre id="ptext" class="ptext">左の候補やページ番号をクリックすると本文が出ます。</pre></aside>
+<aside class="right"><h3>ページ <span id="pno" class="muted"></span> <span id="pview" class="seg" hidden><button data-v="image" class="on">プレビュー</button><button data-v="text">本文</button></span></h3><div id="psec" class="muted small"></div><img id="pimg" class="pimg" alt="" hidden><pre id="ptext" class="ptext">左の候補やページ番号をクリックすると、そのページのプレビューが出ます。</pre></aside>
 </main>
 <script src="/static/app.js"></script></body></html>

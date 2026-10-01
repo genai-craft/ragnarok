@@ -17,7 +17,7 @@ sys.path.insert(0, str(HERE.parents[1]))
 os.environ.setdefault("HF_HUB_CACHE", "/data/openvons/choice_spec/hf_cache")
 
 from fastapi import FastAPI, File, Form, UploadFile  # noqa: E402
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse  # noqa: E402
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 from ragnarok.engine import Engine, Index  # noqa: E402
@@ -54,8 +54,9 @@ def healthz():
 def docs():
     out = []
     for k, ix in G["docs"].items():
+        src = ix.meta.get("source") or ""
         out.append({"id": k, "name": ix.name, "pages": len(ix.pages), "lang": ix.meta.get("lang", "en"), "kind": ix.meta.get("kind", ""), "group": ix.meta.get("group", ""),
-                    "tree": bool(ix.tree), "samples": ix.meta.get("samples", [])})
+                    "tree": bool(ix.tree), "samples": ix.meta.get("samples", []), "pdf": bool(src.lower().endswith(".pdf") and os.path.exists(src)), "unit": ix.meta.get("unit", "page")})
     return {"docs": out}
 
 
@@ -65,6 +66,21 @@ def page(doc: str, p: int):
     if ix is None or not (0 <= p < len(ix.pages)):
         return JSONResponse({"error": "not found"}, status_code=404)
     return {"doc": doc, "p": p, "text": ix.pages[p][:8000], "section": ix.section_path(p)}
+
+
+@app.get("/api/page_image")
+def page_image(doc: str, p: int, zoom: float = 1.6):
+    """PDF のページを画像で返す (元 PDF がある文書のみ)。"""
+    ix = G["docs"].get(doc); src = ix.meta.get("source") if ix else None
+    if ix is None or not src or not src.lower().endswith(".pdf") or not os.path.exists(src) or not (0 <= p < len(ix.pages)):
+        return JSONResponse({"error": "no pdf"}, status_code=404)
+    import pymupdf
+    cache = DATA / "_pagecache"; cache.mkdir(parents=True, exist_ok=True)
+    f = cache / f"{re.sub(r'[^A-Za-z0-9_-]', '_', doc)}_{p}_{zoom}.png"
+    if not f.exists():
+        with pymupdf.open(src) as d:
+            f.write_bytes(d[p].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom)).tobytes("png"))
+    return Response(f.read_bytes(), media_type="image/png", headers={"Cache-Control": "max-age=86400"})
 
 
 @app.get("/api/tree")
@@ -125,8 +141,14 @@ async def ask(doc: str, q: str, k: int = 5, think: int = 1, fast: int = 0, path:
         if fin.none >= 0.5:
             yield sse({"stage": "answer", "text": "この文書には、この質問に答える箇所が見つかりませんでした (「どれでもない」の確率 %.0f%%)。" % (fin.none * 100), "abstained": True, "t": time.time() - t0})
         else:
-            ans = await eng.answer(ix, q, pages, think=bool(think))
-            yield sse({"stage": "answer", "text": ans, "abstained": False, "t": time.time() - t0})
+            yield sse({"stage": "answer_start", "pages": pages, "think": bool(think), "t": time.time() - t0})
+            acc = ""; nthink = 0
+            async for kind, piece in eng.answer_stream(ix, q, pages, think=bool(think)):
+                if kind == "think":
+                    nthink += piece; yield sse({"stage": "answer_think", "chars": nthink, "t": time.time() - t0})
+                else:
+                    acc += piece; yield sse({"stage": "answer_delta", "delta": piece, "t": time.time() - t0})
+            yield sse({"stage": "answer", "text": acc, "abstained": False, "t": time.time() - t0})
         yield sse({"stage": "done", "t": time.time() - t0})
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 

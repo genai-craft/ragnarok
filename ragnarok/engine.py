@@ -99,6 +99,64 @@ class Engine:
                 t = None
         return Index(name, pages, emb.astype(np.float32), t, {"source": pdf, "pages": len(pages)})
 
+    @staticmethod
+    def read_any(path: str) -> tuple[list[str], str]:
+        """PDF 以外も「ページ」の列にする: DOCX (見出し/約 2,000 字で区切る)、PPTX (スライド = ページ)、HTML/TXT/MD (見出しか約 2,000 字)。戻り値 (pages, kind)。"""
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".pdf":
+            import pymupdf
+            with pymupdf.open(path) as d:
+                return [p.get_text() for p in d], "pdf"
+        if ext == ".pptx":
+            from pptx import Presentation
+            out = []
+            for i, sl in enumerate(Presentation(path).slides):
+                txt = "\n".join(sh.text_frame.text for sh in sl.shapes if getattr(sh, "has_text_frame", False) and sh.text_frame.text.strip())
+                notes = sl.notes_slide.notes_text_frame.text if sl.has_notes_slide and sl.notes_slide.notes_text_frame else ""
+                out.append(f"[slide {i+1}]\n{txt}\n{('Notes: ' + notes) if notes.strip() else ''}")
+            return out, "pptx"
+        if ext == ".docx":
+            import docx
+            d = docx.Document(path); blocks = []
+            for para in d.paragraphs:
+                t = para.text.strip()
+                if not t: continue
+                blocks.append(("h" if para.style.name.lower().startswith("heading") else "p", t))
+            for tb in d.tables:
+                blocks.append(("p", "\n".join(" | ".join(c.text.strip() for c in row.cells) for row in tb.rows)))
+            return Engine._chunk_blocks(blocks), "docx"
+        if ext in (".html", ".htm"):
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(open(path, encoding="utf-8", errors="ignore").read(), "html.parser")
+            for t in soup(["script", "style", "nav", "footer"]): t.decompose()
+            blocks = [("h" if el.name in ("h1", "h2", "h3") else "p", el.get_text(" ", strip=True)) for el in soup.find_all(["h1", "h2", "h3", "p", "li", "td", "pre"]) if el.get_text(strip=True)]
+            return Engine._chunk_blocks(blocks), "html"
+        # txt / md
+        txt = open(path, encoding="utf-8", errors="ignore").read()
+        blocks = [("h" if re.match(r"^#{1,3}\s", ln) else "p", ln.strip()) for ln in txt.splitlines() if ln.strip()]
+        return Engine._chunk_blocks(blocks), ext.lstrip(".") or "text"
+
+    @staticmethod
+    def _chunk_blocks(blocks: list[tuple[str, str]], target: int = 2000) -> list[str]:
+        """見出しで区切りつつ、長すぎる節は target 文字で割る。"""
+        pages, cur = [], ""
+        for kind, t in blocks:
+            if (kind == "h" and len(cur) > 400) or len(cur) + len(t) > target * 1.5:
+                pages.append(cur.strip()); cur = ""
+            cur += ("\n\n" if cur else "") + t
+            while len(cur) > target * 1.5:
+                pages.append(cur[:target].strip()); cur = cur[target:]
+        if cur.strip(): pages.append(cur.strip())
+        return pages or [""]
+
+    def index_file(self, path: str, name: str | None = None) -> Index:
+        """PDF / DOCX / PPTX / HTML / TXT / MD。PDF 以外はレイアウト木なし (見出しで区切った「ページ」)。"""
+        if path.lower().endswith(".pdf"):
+            return self.index_pdf(path, name)
+        pages, kind = self.read_any(path)
+        ix = self.index_pages(name or os.path.basename(path).rsplit(".", 1)[0], pages)
+        ix.meta.update({"source": path, "format": kind, "unit": "slide" if kind == "pptx" else "section"}); return ix
+
     def index_pages(self, name: str, pages: list[str]) -> Index:
         emb = self.emb.encode([p[:6000] or " " for p in pages], batch_size=8, normalize_embeddings=True, show_progress_bar=False)
         return Index(name, pages, emb.astype(np.float32), None, {"pages": len(pages)})
@@ -156,12 +214,42 @@ class Engine:
         m = r.json()["choices"][0]["message"]; txt = (m.get("content") or "").strip()
         return txt.split("</think>")[-1].strip() if "</think>" in txt else txt
 
-    async def answer(self, ix: Index, q: str, pages: list[int], think: bool = True, lang: str = "auto") -> str:
+    def _answer_prompt(self, ix: Index, q: str, pages: list[int], lang: str = "auto") -> str:
         ctx = "\n\n".join(f"=== page {p+1} ===\n{ix.pages[p][:6000]}" for p in pages)
         ja = lang == "ja" or (lang == "auto" and re.search(r"[ぁ-んァ-ン一-龥]", q))
         inst = ("以下は文書の抜粋です。抜粋だけを根拠に質問に答えてください。数値には単位を付け、必要なら計算過程を短く示し、根拠のページ番号を添えてください。抜粋に答えが無ければ「文書中に見つかりません」と答えてください。"
                 if ja else "Using only the excerpts below, answer the question. Give numbers with units, show a brief calculation if needed, and cite page numbers. If the excerpts do not contain the answer, say \"Not found in the document\".")
-        return await self.chat(f"{inst}\n\nDocument: {ix.name}\n\n{ctx}\n\nQuestion: {q}\nAnswer:", think=think)
+        return f"{inst}\n\nDocument: {ix.name}\n\n{ctx}\n\nQuestion: {q}\nAnswer:"
+
+    async def answer(self, ix: Index, q: str, pages: list[int], think: bool = True, lang: str = "auto") -> str:
+        return await self.chat(self._answer_prompt(ix, q, pages, lang), think=think)
+
+    async def answer_stream(self, ix: Index, q: str, pages: list[int], think: bool = True, lang: str = "auto"):
+        """回答をトークン単位で流す。思考中は ("think", 文字数) を、本文は ("text", 断片) を yield。"""
+        body = {"model": self.answer_model, "messages": [{"role": "user", "content": self._answer_prompt(ix, q, pages, lang)}], "max_tokens": 3000 if think else 500,
+                "temperature": 0, "stream": True, "chat_template_kwargs": {"enable_thinking": think}}
+        in_think = think; buf = ""
+        async with self.http.stream("POST", f"{self.answer_url}/chat/completions", json=body) as r:
+            async for line in r.aiter_lines():
+                if not line.startswith("data: ") or line.strip() == "data: [DONE]": continue
+                try:
+                    d = json.loads(line[6:]); delta = d["choices"][0].get("delta", {})
+                except Exception:
+                    continue
+                rc = delta.get("reasoning_content") or delta.get("reasoning")
+                if rc:
+                    yield ("think", len(rc)); continue
+                c = delta.get("content") or ""
+                if not c: continue
+                if in_think:
+                    buf += c
+                    if "</think>" in buf:
+                        in_think = False; c = buf.split("</think>", 1)[1]; buf = ""
+                    elif "<think>" in buf or buf.strip() == "":
+                        yield ("think", len(c)); continue
+                    else:
+                        in_think = False; c = buf; buf = ""
+                yield ("text", c)
 
     async def summarize_hits(self, ix: Index, topic: str, hits: list[int], lang: str = "auto") -> str:
         ctx = "\n\n".join(f"=== page {p+1} ===\n{ix.pages[p][:2500]}" for p in hits[:20])

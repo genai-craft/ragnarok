@@ -15,7 +15,7 @@ for d in PICK:
     tree = tree_from_layout(f"{FB}/repo/pdfs/{d}.pdf", d)
     samples = [{"q": r["question"], "a": r["answer"], "pages": [int(e["evidence_page_num"]) for e in r["evidence"]]} for r in rows if r["doc_name"] == d][:4]
     co, yr = d.split("_")[0], d.split("_")[1]
-    ix = Index(d, pages, emb, tree, {"kind": "annual 10-K filing", "lang": "en", "group": co, "year": yr, "samples": samples})
+    ix = Index(d, pages, emb, tree, {"source": f"{FB}/repo/pdfs/{d}.pdf", "kind": "annual 10-K filing", "lang": "en", "group": co, "year": yr, "samples": samples})
     ix.save(f"{OUT}/{d}"); print(d, len(pages), "pages", len(samples), "samples")
 # 日本語: 情報通信白書 (令和 7 年版、総務省)
 ja = "/data/jev-rag/pdfs/soumu_r7_gaiyo.pdf"

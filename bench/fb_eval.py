@@ -76,6 +76,33 @@ async def decide_pages(r, backend, cand, t=None):
     dec = (await backend.adecide(f"Document: {d} (an annual 10-K filing of {r['company']})", [q]))[0]
     return dict(zip(cand, [float(x) for x in dec.probs[:-1]]))
 
+_xenc = None
+async def ret_xenc(r, topn=50):
+    """既存手法: cross-encoder (BAAI/bge-reranker-v2-m3) で埋め込み top-topn を並べ替え。候補ごとに 1 forward。"""
+    global _xenc
+    if _xenc is None:
+        from sentence_transformers import CrossEncoder
+        _xenc = CrossEncoder("BAAI/bge-reranker-v2-m3", device="cuda", max_length=1024)
+    d = r["doc_name"]; s = emb(d) @ qemb(r["question"]); cand = [int(i) for i in np.argsort(-s)[:topn]]
+    t0 = time.perf_counter()
+    import functools
+    scores = await asyncio.to_thread(functools.partial(_xenc.predict, [(r["question"], pages(d)[p][:3000]) for p in cand], batch_size=16, show_progress_bar=False))
+    XENC_T.append(time.perf_counter() - t0)
+    order = sorted(range(len(cand)), key=lambda i: -float(scores[i]))
+    return [cand[i] for i in order[:K]], 0
+XENC_T = []
+
+async def ret_llmrank(r, topn=25):
+    """既存手法: 生成型の listwise rerank (RankGPT 方式)。27B に候補 25 ページの順位を JSON で書かせる。"""
+    d = r["doc_name"]; s = emb(d) @ qemb(r["question"]); cand = [int(i) for i in np.argsort(-s)[:topn]]
+    lst = "\n".join(f"[{k+1}] page {p+1}: {snippet(d, p)}" for k, p in enumerate(cand))
+    txt = await chat27(f"Rank the following passages from the 10-K filing of {r['company']} by how likely they contain the information needed to answer the question. "
+                       f"Reply with JSON only: {{\"ranking\": [<passage numbers, most relevant first, at least 5>]}}\n\nQuestion: {r['question']}\n\nPassages:\n{lst}", 120)
+    nums = [int(x) for x in re.findall(r"\d+", txt.split("ranking")[-1])]
+    order = [n - 1 for n in dict.fromkeys(nums) if 1 <= n <= len(cand)]
+    pgs = [cand[i] for i in order][:K]
+    return (pgs + [p for p in cand if p not in pgs])[:K], 1
+
 async def ret_rerank_mix(r, topn=50, group=25, pool_each=6):
     """1 段目を 4B (25 ずつ)、最終段だけ 27B。27B 1 回分のコストで 2 段に迫れるか。"""
     d = r["doc_name"]; s = emb(d) @ qemb(r["question"]); cand = [int(i) for i in np.argsort(-s)[:topn]]
@@ -171,6 +198,8 @@ async def run(method):
             elif method == "rerank4b_2st": pgs, calls = await ret_rerank(r, B4, topn=50)
             elif method == "rerank27b_2st+tree": pgs, calls = await ret_rerank(r, B27, topn=50, with_tree=True)
             elif method == "rerank_mix": pgs, calls = await ret_rerank_mix(r)
+            elif method == "xenc50": pgs, calls = await ret_xenc(r, 50)
+            elif method == "llmrank27b": pgs, calls = await ret_llmrank(r, 25)
             elif method == "rerank27b_3st": pgs, calls = await ret_rerank(r, B27, topn=100, group=25)
             elif method == "rerank27b+tree": pgs, calls = await ret_rerank(r, B27, with_tree=True)
             elif method == "tree_dec27b": pgs, calls = await ret_tree_dec(r, B27)
@@ -193,6 +222,7 @@ async def run(method):
     for x in res: by.setdefault(x["type"], []).append(x["correct"])
     print(f"{method:16s}{' think' if THINK else ''} k={K} 根拠 hit@1 {sum(x['hit1'] for x in res)/n:.3f} hit@{K} {sum(x['hit'] for x in res)/n:.3f} 正解率 {sum(x['correct'] for x in res)/n:.3f} n={n} wall {time.time()-t0:.0f}s | "
           + " ".join(f"{k[:8]}:{sum(v)/len(v):.2f}" for k, v in by.items()), flush=True)
+    if XENC_T: print(f"   cross-encoder 1 問あたり {np.mean(XENC_T):.2f}s (50 候補)", flush=True)
     json.dump(res, open(f"{FB}/eval_{method}_k{K}{'_think' if THINK else ''}.json", "w"), ensure_ascii=False, indent=1)
 
 async def main():

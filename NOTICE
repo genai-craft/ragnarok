@@ -1,0 +1,15 @@
+ragnarok — the last RAG
+Copyright 2026 GenAI Craft / Satoshi Toriumi and the ragnarok contributors
+https://github.com/genai-craft/ragnarok  |  https://ragnarok.openvons.com
+
+Built on openvons (https://github.com/genai-craft/openvons), the finite-candidate
+calibrated decision engine. Under Section 4(d) of the Apache License 2.0,
+redistributions of this software or derivative works must retain this NOTICE
+file. When you use ragnarok in a product, service, paper or article, please
+credit it as:
+
+    ragnarok — https://github.com/genai-craft/ragnarok
+
+Third-party models used at runtime (Qwen3-Embedding, Qwen3 / Qwen3.8, bge-reranker
+in the benchmarks) are subject to their own licenses. Benchmark data
+(FinanceBench) is used for evaluation only and not redistributed.

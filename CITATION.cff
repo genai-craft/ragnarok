@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use ragnarok, please cite it and keep the NOTICE file."
+title: "ragnarok: vector + tree + graph-lite retrieval with calibrated decisions, fully local"
+type: software
+authors:
+  - family-names: Toriumi
+    given-names: Satoshi
+    affiliation: GenAI Craft
+repository-code: "https://github.com/genai-craft/ragnarok"
+url: "https://ragnarok.openvons.com"
+license: Apache-2.0
+version: "0.1.0"
+date-released: "2026-10-02"

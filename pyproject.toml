@@ -1,0 +1,20 @@
+[project]
+name = "ragnarok"
+version = "0.1.0"
+description = "The last RAG you'll need: vector + tree + graph-lite + calibrated decisions (openvons), fully local."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+authors = [{ name = "Satoshi Toriumi", email = "satoshi.toriumi.3@futurestandard.co.jp" }]
+dependencies = ["openvons", "numpy", "httpx", "pymupdf", "sentence-transformers>=3.0"]
+
+[project.optional-dependencies]
+demo = ["fastapi", "uvicorn", "python-multipart"]
+bench = ["openai"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ragnarok*"]

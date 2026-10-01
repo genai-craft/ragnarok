@@ -1,9 +1,17 @@
 # ragnarok — the last RAG
 
+[English] · [日本語 (Japanese)](README_ja.md)
+
 **Vector × tree × graph-lite × calibrated decisions. Fully local (one GPU).**
 Built on [openvons](https://github.com/genai-craft/openvons), the finite-candidate decision engine (Jev-style calibrated choices).
 
-Demo: https://ragnarok.openvons.com · Video (2.5 min, Japanese narration): https://ragnarok.openvons.com/static/ragnarok_demo.mp4
+**Live demo: https://ragnarok.openvons.com** · Full video (2.7 min, Japanese narration & subtitles): [mp4 on the demo site](https://ragnarok.openvons.com/static/ragnarok_demo.mp4) · [release asset](https://github.com/genai-craft/ragnarok/releases/latest)
+
+![ragnarok demo: 2-stage probability decisions, abstention, sweep](docs/img/demo.gif)
+
+| 50 candidates → 25+25 → 10, one token each | "none of these" ≥ 50% → abstain | every page judged, 25 ms each |
+|---|---|---|
+| ![stages](docs/img/stages.jpg) | ![abstain](docs/img/abstain.jpg) | ![sweep](docs/img/sweep.jpg) |
 
 Most RAG stacks pick one paradigm — vectors, a table-of-contents tree (PageIndex), or a knowledge graph (GraphRAG) — and each loses somewhere.
 ragnarok uses **vectors for breadth**, **a document tree for structure**, **query-time sweeps instead of a pre-built graph for coverage**, and — the part that is new —
@@ -77,6 +85,8 @@ asyncio.run(main())
 PY
 python -m examples.demo.server --port 8608     # the web demo
 ```
+
+The demo takes **PDF, DOCX, PPTX, HTML, TXT and Markdown** (non-PDF files are split into sections/slides instead of pages), shows each decision stage with probabilities, previews the cited PDF page, streams the answer, and has a sweep mode.
 
 Smaller setups: the 4B alone works for everything (re-rank hit@5 0.77 instead of 0.88); any OpenAI-compatible server that returns `logprobs` and supports guided choice can be the judge.
 

@@ -95,15 +95,19 @@ def tree(doc: str):
 async def upload(file: UploadFile = File(...), name: str = Form("")):
     data = await file.read()
     if len(data) > 100 * 1024 * 1024:
-        return JSONResponse({"error": "PDF は 100MB まで"}, status_code=413)
-    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False); tmp.write(data); tmp.close()
-    nm = re.sub(r"[^\w\-぀-鿿]+", "_", (name or Path(file.filename or "doc").stem))[:60]
+        return JSONResponse({"error": "ファイルは 100MB まで"}, status_code=413)
+    ext = Path(file.filename or "doc.pdf").suffix.lower()
+    if ext not in (".pdf", ".docx", ".pptx", ".html", ".htm", ".txt", ".md"):
+        return JSONResponse({"error": f"対応形式: PDF / DOCX / PPTX / HTML / TXT / MD ({ext} は未対応)"}, status_code=415)
+    nm = re.sub(r"[^\w\-\u3040-\u9fff]+", "_", (name or Path(file.filename or "doc").stem))[:60]
+    key = f"up_{int(time.time())}_{nm}"
+    up = DATA / "_uploads"; up.mkdir(parents=True, exist_ok=True)
+    path = up / f"{key}{ext}"; path.write_bytes(data)          # PDF プレビューのために元ファイルを残す
     t0 = time.time()
-    ix = await asyncio.to_thread(G["engine"].index_pdf, tmp.name, nm)
-    os.unlink(tmp.name)
-    ix.meta["kind"] = "uploaded document"; ix.meta["lang"] = "ja" if re.search(r"[ぁ-んァ-ン一-龥]", "".join(ix.pages[:3])) else "en"
-    key = f"up_{int(time.time())}_{nm}"; G["docs"][key] = ix
-    return {"id": key, "name": ix.name, "pages": len(ix.pages), "tree": bool(ix.tree), "elapsed_s": time.time() - t0}
+    ix = await asyncio.to_thread(G["engine"].index_file, str(path), nm)
+    ix.meta.update({"kind": f"uploaded {ext.lstrip('.')}", "lang": "ja" if re.search(r"[ぁ-んァ-ン一-龥]", "".join(ix.pages[:3])) else "en", "source": str(path)})
+    G["docs"][key] = ix
+    return {"id": key, "name": ix.name, "pages": len(ix.pages), "tree": bool(ix.tree), "pdf": ext == ".pdf", "unit": ix.meta.get("unit", "page"), "elapsed_s": time.time() - t0}
 
 
 def sse(obj) -> str:

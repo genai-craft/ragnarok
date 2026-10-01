@@ -242,14 +242,17 @@ class Engine:
                 c = delta.get("content") or ""
                 if not c: continue
                 if in_think:
+                    # Qwen3 系は思考が content に流れてくる (<think> は雛形側で開かれ、本文は </think> の後)。</think> が来るまで思考として数える
                     buf += c
                     if "</think>" in buf:
-                        in_think = False; c = buf.split("</think>", 1)[1]; buf = ""
-                    elif "<think>" in buf or buf.strip() == "":
-                        yield ("think", len(c)); continue
+                        in_think = False; after = buf.split("</think>", 1)[1].lstrip("\n"); buf = ""
+                        if after: yield ("text", after)
                     else:
-                        in_think = False; c = buf; buf = ""
+                        yield ("think", len(c))
+                    continue
                 yield ("text", c)
+        if in_think and buf.strip():   # 思考モードなのに </think> が最後まで来なかった = 思考せずに答えた
+            yield ("text", buf.replace("<think>", "").strip())
 
     async def summarize_hits(self, ix: Index, topic: str, hits: list[int], lang: str = "auto") -> str:
         ctx = "\n\n".join(f"=== page {p+1} ===\n{ix.pages[p][:2500]}" for p in hits[:20])

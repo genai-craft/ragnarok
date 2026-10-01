@@ -9,6 +9,7 @@ import httpx, numpy as np
 from openvons.core.primitives import Option, Question
 from openvons.lm.backends.llm_backend import LLMBackend
 from jevrag.tree import Doc, Node, tree_from_pageindex, outline_text
+from jevrag.layout import tree_from_layout
 
 FB = "/data/jev-rag/financebench"
 ROWS = [json.loads(l) for l in open(f"{FB}/repo/data/financebench_open_source.jsonl")]
@@ -16,7 +17,16 @@ METHODS = sys.argv[1].split(",") if len(sys.argv) > 1 else ["emb"]
 K = int(sys.argv[2]) if len(sys.argv) > 2 else 5
 C27 = httpx.AsyncClient(timeout=600); B4 = LLMBackend("http://127.0.0.1:8311/v1", "qwen3-4b", mode="logprob", concurrency=32); B27 = LLMBackend("http://127.0.0.1:8310/v1", "qwen27b", mode="logprob", concurrency=12)
 SEM27 = asyncio.Semaphore(12)
-_pages, _emb, _trees = {}, {}, {}
+_pages, _emb, _trees, _lay = {}, {}, {}, {}
+def lay(d) -> Doc:
+    if d not in _lay:
+        f = f"{FB}/trees_layout/{d}.json"
+        if os.path.exists(f):
+            doc = Doc.load(f)
+        else:
+            os.makedirs(f"{FB}/trees_layout", exist_ok=True); doc = tree_from_layout(f"{FB}/repo/pdfs/{d}.pdf", d); doc.save(f)
+        doc.pages = pages(d); _lay[d] = doc
+    return _lay[d]
 
 def pages(d):
     if d not in _pages: _pages[d] = json.load(open(f"{FB}/pages/{d}.json"))
@@ -57,32 +67,60 @@ def sec_path(doc: Doc, p: int) -> str:
 async def ret_emb(r):
     d = r["doc_name"]; s = emb(d) @ qemb(r["question"]); return [int(i) for i in np.argsort(-s)[:K]], 0
 
-async def ret_rerank(r, backend, with_tree=False, topn=10):
+async def decide_pages(r, backend, cand, t=None):
+    """候補ページを 1 回の確率判定で採点 (選択肢 + どれでもない)。戻り値 {page: p}。"""
+    d = r["doc_name"]
+    opts = [Option(f"p{p}", (f"[{sec_path(t, p)}] " if t else "") + f"page {p+1}: {snippet(d, p)}") for p in cand]
+    opts.append(Option("none", "None of these pages contains the answer"))
+    q = Question("choice", f"Which page contains the information needed to answer this question?\nQuestion: {r['question']}", opts)
+    dec = (await backend.adecide(f"Document: {d} (an annual 10-K filing of {r['company']})", [q]))[0]
+    return dict(zip(cand, [float(x) for x in dec.probs[:-1]]))
+
+async def ret_rerank(r, backend, with_tree=False, topn=10, group=25):
+    """埋め込み top-topn → 確率判定で並べ替え。topn > group なら group ずつ採点して各束の上位を集め、もう 1 回採点する (2 段)。"""
     d = r["doc_name"]; s = emb(d) @ qemb(r["question"]); cand = [int(i) for i in np.argsort(-s)[:topn]]
-    t = tree(d) if with_tree else None
+    t = lay(d) if with_tree else None
+    calls = 0
+    if len(cand) > group:
+        pool = []
+        for i in range(0, len(cand), group):
+            sc = await decide_pages(r, backend, cand[i : i + group], t); calls += 1
+            pool += [p for p, _ in sorted(sc.items(), key=lambda x: -x[1])[: max(K, group // 4)]]
+        cand = pool
+    sc = await decide_pages(r, backend, cand, t); calls += 1
+    return [p for p, _ in sorted(sc.items(), key=lambda x: -x[1])[:K]], calls
+
+def hits_to_pages(hits, k):
+    out = []
+    for h in hits:
+        for p in h.node.own_pages() + list(range(h.node.start - 1, h.node.end)):
+            if p not in out: out.append(p)
+            if len(out) >= k: break
+        if len(out) >= k: break
+    return out[:k]
+
+async def ret_tree_dec(r, backend, which="pi"):
+    from jevrag.navigate import DecisionNavigator
+    t = tree(r["doc_name"]) if which == "pi" else lay(r["doc_name"])
+    if t is None: return await ret_emb(r)
+    res = await DecisionNavigator(backend, beam=3, topk=K).search(r["question"], t)
+    return hits_to_pages(res.hits, K), res.calls
+
+async def ret_hybrid(r, backend, which="lay"):
+    """本当のハイブリッド: 埋め込み top-5 ページ ∪ 木の探索 top-5 ページ → 確率判定 1 回で並べ替え (候補には節の経路を添える)。"""
+    d = r["doc_name"]; e_pages, _ = await ret_emb(r); t_pages, calls = await ret_tree_dec(r, backend, which)
+    cand = list(dict.fromkeys(e_pages + t_pages))[:12]
+    t = lay(d) if which == "lay" else tree(d)
     opts = [Option(f"p{p}", (f"[{sec_path(t, p)}] " if t else "") + f"page {p+1}: {snippet(d, p)}") for p in cand]
     opts.append(Option("none", "None of these pages contains the answer"))
     q = Question("choice", f"Which page contains the information needed to answer this question?\nQuestion: {r['question']}", opts)
     dec = (await backend.adecide(f"Document: {d} (an annual 10-K filing of {r['company']})", [q]))[0]
     ps = list(dec.probs[:-1]); order = sorted(range(len(cand)), key=lambda i: -ps[i])
-    return [cand[i] for i in order[:K]], 1
+    return [cand[i] for i in order[:K]], calls + 1
 
-async def ret_tree_dec(r, backend):
-    from jevrag.navigate import DecisionNavigator
-    t = tree(r["doc_name"])
-    if t is None: return await ret_emb(r)
-    res = await DecisionNavigator(backend, beam=3, topk=K).search(r["question"], t)
-    out = []
-    for h in res.hits:
-        for p in range(h.node.start - 1, h.node.end):
-            if p not in out: out.append(p)
-            if len(out) >= K: break
-        if len(out) >= K: break
-    return out[:K], res.calls
-
-async def ret_tree_gen(r):
+async def ret_tree_gen(r, which="pi"):
     from jevrag.navigate import GenerativeNavigator
-    t = tree(r["doc_name"])
+    t = tree(r["doc_name"]) if which == "pi" else lay(r["doc_name"])
     if t is None: return await ret_emb(r)
     res = await GenerativeNavigator("http://127.0.0.1:8310/v1", "qwen27b", topk=K).search(r["question"], t)
     out = []
@@ -116,10 +154,20 @@ async def run(method):
             if method == "emb": pgs, calls = await ret_emb(r)
             elif method == "rerank27b": pgs, calls = await ret_rerank(r, B27)
             elif method == "rerank4b": pgs, calls = await ret_rerank(r, B4)
+            elif method == "rerank27b_n20": pgs, calls = await ret_rerank(r, B27, topn=20)
+            elif method == "rerank4b_n20": pgs, calls = await ret_rerank(r, B4, topn=20)
+            elif method == "rerank27b_2st": pgs, calls = await ret_rerank(r, B27, topn=50)
+            elif method == "rerank4b_2st": pgs, calls = await ret_rerank(r, B4, topn=50)
+            elif method == "rerank27b_2st+tree": pgs, calls = await ret_rerank(r, B27, topn=50, with_tree=True)
             elif method == "rerank27b+tree": pgs, calls = await ret_rerank(r, B27, with_tree=True)
             elif method == "tree_dec27b": pgs, calls = await ret_tree_dec(r, B27)
             elif method == "tree_dec4b": pgs, calls = await ret_tree_dec(r, B4)
             elif method == "tree_gen27b": pgs, calls = await ret_tree_gen(r)
+            elif method == "lay_dec27b": pgs, calls = await ret_tree_dec(r, B27, "lay")
+            elif method == "lay_dec4b": pgs, calls = await ret_tree_dec(r, B4, "lay")
+            elif method == "lay_gen27b": pgs, calls = await ret_tree_gen(r, "lay")
+            elif method == "hyb27b": pgs, calls = await ret_hybrid(r, B27, "lay")
+            elif method == "hyb4b": pgs, calls = await ret_hybrid(r, B4, "lay")
             else: raise ValueError(method)
             ev = {int(e["evidence_page_num"]) for e in r["evidence"]}
             hit = bool(ev & set(pgs)); hit1 = bool(ev & set(pgs[:1]))

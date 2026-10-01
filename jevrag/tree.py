@@ -25,6 +25,12 @@ class Node:
         for c in self.children:
             yield from c.walk()
 
+    def own_pages(self) -> list[int]:
+        """この節自身の本文のページ (0 始まり): 子があれば最初の子の前まで、無ければ全範囲。"""
+        end = (self.children[0].start - 1) if self.children else self.end
+        end = max(end, self.start)
+        return list(range(self.start - 1, end))
+
     def leaves(self) -> list["Node"]:
         return [n for n in self.walk() if n.leaf and n.id != "root"]
 

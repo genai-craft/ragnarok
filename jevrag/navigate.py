@@ -73,6 +73,8 @@ class DecisionNavigator:
                 probs, none = await self._children_probs(q, doc, node, node.children); calls += 1
                 if node.id == "root":
                     none_root = none
+                elif none >= 0.5:   # どの子でもない = この節自身の本文 (子の前のページ) が答え
+                    leaves.append(Hit(node, score * none, path + [node.id]))
                 for c, p in sorted(zip(node.children, probs), key=lambda x: -x[1])[: self.beam]:
                     if score * p >= self.min_mass or not nxt:
                         nxt.append((score * p, c, path + [node.id]))
@@ -156,6 +158,8 @@ class HybridNavigator(DecisionNavigator):
                 probs, none = await self._children_probs(q, doc, node, ch); calls += 1
                 if node.id == "root":
                     none_root = none
+                elif none >= 0.5:
+                    leaves.append(Hit(node, score * none, path + [node.id]))
                 for c, p in sorted(zip(ch, probs), key=lambda x: -x[1])[: self.beam]:
                     if score * p >= self.min_mass or not nxt:
                         nxt.append((score * p, c, path + [node.id]))

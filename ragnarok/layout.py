@@ -11,6 +11,10 @@ RE_PART = re.compile(r"^\s*PART\s+[IVX]+\b", re.I)
 RE_ITEM = re.compile(r"^\s*ITEM\s+(\d{1,2}[A-C]?)\s*[.:\-–—]?\s*(.{0,90})$", re.I)
 RE_NOTE = re.compile(r"^\s*(NOTE|Note)\s+(\d{1,2})\b")
 RE_NUMSEC = re.compile(r"^\s*(\d{1,2}(\.\d{1,2}){0,2})\.?\s+([A-Z][^.]{2,80})$")
+# 日本の有価証券報告書: 第一部【企業情報】 / 第1【企業の概況】 / 1【主要な経営指標等の推移】 / (1)連結経営指標等
+RE_JP_PART = re.compile(r"^\s*第[一二三四五六七八九十]+部\s*【[^】]{1,30}】")
+RE_JP_SEC = re.compile(r"^\s*第\s*\d{1,2}\s*【[^】]{1,40}】")
+RE_JP_SUB = re.compile(r"^\s*\d{1,2}\s*【[^】]{1,40}】")
 
 
 def _lines(page) -> list[tuple[str, float, bool, float]]:
@@ -53,12 +57,25 @@ def tree_from_layout(pdf: str, name: str | None = None, max_children: int = 40) 
             toc_pages.add(i)
     heads: list[tuple[int, int, str]] = []   # (level, page0, title)
     seen_items: set[str] = set()
+    # 有報は「第1【企業の概況】」の形の目次ページ (見出しが 5 行以上) も飛ばす
+    for i, pl in enumerate(page_lines):
+        if sum(1 for t, *_ in pl if RE_JP_SEC.match(t) or RE_JP_SUB.match(t)) >= 8:
+            toc_pages.add(i)
+    seen_jp: set[str] = set()
     for i, pl in enumerate(page_lines):
         if i in toc_pages:
             continue
         for t, s, b, y in pl:
             if t.lower() in boiler or len(t) < 3 or len(t) > 110:
                 continue
+            if RE_JP_PART.match(t):
+                heads.append((1, i, t[:40])); continue
+            if RE_JP_SEC.match(t):
+                if t in seen_jp: continue
+                seen_jp.add(t); heads.append((2, i, t[:60])); continue
+            if RE_JP_SUB.match(t):
+                if t in seen_jp: continue
+                seen_jp.add(t); heads.append((3, i, t[:70])); continue
             if sum(ch.isdigit() for ch in t) > 0.4 * len(t):
                 continue   # 数字だらけ (表の行)
             if RE_PART.match(t) and (b or s >= body + 0.5):

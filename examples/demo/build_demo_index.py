@@ -24,3 +24,17 @@ if os.path.exists(ja):
     ix = eng.index_pdf(ja, "情報通信白書 令和7年版 (総務省)")
     ix.meta.update({"kind": "government white paper (Japanese)", "lang": "ja", "group": "総務省", "samples": [{"q": "生成AIの利用率は国別にどのくらいか", "a": "", "pages": []}, {"q": "日本のデータセンターの市場規模の見通しは", "a": "", "pages": []}]})
     ix.save(f"{OUT}/soumu_r7"); print("soumu_r7", len(ix.pages), "pages")
+
+# 有価証券報告書 (EDINET、examples/demo/fetch_edinet.py で取得)
+ED = "/data/ragnarok/edinet"
+if os.path.exists(f"{ED}/meta.json"):
+    eng = eng or Engine()
+    QS = ["売上高（売上収益）はいくらか", "従業員数は何人か", "研究開発費はいくらか", "事業等のリスクとして挙げられているものは何か"]
+    for m in json.load(open(f"{ED}/meta.json")):
+        fy = m["periodEnd"][:4] + ("年3月期" if m["periodEnd"][5:7] == "03" else f"年{int(m['periodEnd'][5:7])}月期")
+        key = f"edinet_{m['company']}_{m['periodEnd'][:7]}"
+        if os.path.exists(f"{OUT}/{key}/pages.json"): print("skip", key); continue
+        ix = eng.index_pdf(m["file"], f"{m['company']} 有価証券報告書 {fy}")
+        ix.meta.update({"kind": "有価証券報告書 (EDINET)", "lang": "ja", "group": m["company"], "year": m["periodEnd"][:4], "source": m["file"], "docID": m["docID"],
+                        "samples": [{"q": f"{fy}の{q}", "a": "", "pages": []} for q in QS]})
+        ix.save(f"{OUT}/{key}"); print(key, len(ix.pages), "pages, tree nodes", sum(1 for _ in ix.tree.root.walk()) - 1 if ix.tree else 0)

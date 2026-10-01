@@ -1,0 +1,10 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><link rel="stylesheet" href="/static/app.css"><style>
+body{display:flex;align-items:center;justify-content:center;height:100vh;background:radial-gradient(ellipse at 70% 80%,#1a2230,#0d1117 60%)}
+.t{width:1100px}.t h1{font-size:56px;margin:0 0 20px;color:var(--acc)}table{width:100%;border-collapse:collapse;font-size:24px}td{padding:10px 14px;border-bottom:1px solid var(--line)}td:last-child{text-align:right;color:var(--ok);font-weight:700}
+.t small{display:block;margin-top:26px;color:var(--muted);font-size:20px}
+</style></head><body><div class="t"><h1>測った数字 (FinanceBench 150 問、全部ローカル 27B)</h1>
+<table><tr><td>根拠ページの的中 hit@5 — ベクトル検索 0.67 → 確率判定 2 段</td><td>0.88</td></tr>
+<tr><td>回答正解率 — 0.47 → 2 段 + 思考あり回答</td><td>0.73</td></tr>
+<tr><td>棄却 (同じ会社・別年度の文書を見分ける AUROC) — 埋め込み 0.73 → 「どれでもない」確率</td><td>0.96</td></tr>
+<tr><td>網羅 (触れている箇所の再現率) — ベクトル top-10 0.57 → 全ページ判定</td><td>0.93</td></tr></table>
+<small>github.com/genai-craft/ragnarok · ragnarok.openvons.com · built on openvons (Jev-style calibrated decisions)</small></div></body></html>

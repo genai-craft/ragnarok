@@ -31,3 +31,5 @@ textarea{resize:vertical}.upl{display:inline-block;margin-top:6px;padding:6px 10
 
 .pimg{cursor:zoom-in}.lightbox{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:50;overflow:auto;cursor:zoom-out;padding:20px}.lightbox img{display:block;margin:0 auto;width:min(1400px,96vw);background:#fff;border-radius:4px}
 .lbhint{position:fixed;bottom:12px;left:0;right:0;text-align:center;color:#8b949e;font-size:12px}
+
+.cells.wide .cell{width:112px;font-size:9px}.cells.wide .cell span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:108px}

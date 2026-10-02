@@ -17,7 +17,7 @@ Most RAG stacks pick one paradigm — vectors, a table-of-contents tree (PageInd
 ragnarok uses **vectors for breadth**, **a document tree for structure**, **query-time sweeps instead of a pre-built graph for coverage**, and — the part that is new —
 **1-token probability decisions** (not generation) to choose among candidates at every step. That gives you three things the others don't:
 
-1. **Precision at the same cost**: re-rank 50 candidates with three 1-token forwards instead of a generative re-ranker → FinanceBench evidence hit@5 **0.67 → 0.88**.
+1. **Precision at the same cost**: re-rank 50 candidates with three 1-token forwards instead of a generative re-ranker → FinanceBench evidence hit@5 **0.67 → 0.89**, answer accuracy **0.47 → 0.77**.
 2. **Abstention that actually works**: a calibrated "none of these" option. When the answer is not in the document, it says so — even when the document *looks* right (same company, different fiscal year: AUROC **0.96** vs 0.73 for embedding similarity).
 3. **Coverage without an index of extractions**: "every place this topic appears" is a yes/no decision per page (25 ms each on a 4B model) → recall **0.93** vs 0.57 for vector top-10.
 
@@ -31,8 +31,8 @@ FinanceBench open-source set (150 questions, 84 10-K filings, 12,013 pages). Ans
 | + cross-encoder re-rank (bge-reranker-v2-m3, top-50) | 0.28 | 0.61 | 0.46 |
 | + generative listwise re-rank (RankGPT-style, 27B, top-25) | 0.57 | 0.81 | 0.59 |
 | PageIndex-style (show the tree, generate node ids) | 0.39 | 0.58 | 0.45 |
-| **ragnarok: vector top-50 → 2-stage 1-token decisions (25+25 → 10 → 5)** | 0.59 | **0.88** | **0.66** |
-| same, answerer with thinking | 0.59 | 0.88 | **0.73** |
+| **ragnarok: vector top-50 → 2-stage 1-token decisions (25+25 → 10 → 5)** | 0.63 | **0.89** | 0.68 |
+| same, answerer with thinking | 0.63 | 0.89 | **0.77** |
 
 Abstention — ask each question against a *different* document and look at the "none of these" probability:
 
@@ -52,7 +52,7 @@ Coverage — "all pages that discuss X" (6 filings × 8 topics, oracle = 27B pag
 
 Full tables, what did *not* work (tree navigation on 10-Ks, distilling the re-ranker into a 4B head), and the qualitative comparison with GraphRAG / PageIndex / vector RAG: [docs/comparison.md](docs/comparison.md), [bench/README.md](bench/README.md).
 
-Japanese securities reports (EDINET, 10 companies × 26 fiscal years, 130 synthetic questions): vector hit@5 0.78 → 2-stage decisions **0.82**, answer accuracy **0.88** (27B thinking). Details in [bench/README.md](bench/README.md).
+Japanese securities reports (EDINET, 10 companies × 26 fiscal years, 130 synthetic questions): vector hit@5 0.78 → 2-stage decisions **0.91**, answer accuracy **0.92** (27B thinking). Details in [bench/README.md](bench/README.md).
 
 ## How it works
 
@@ -91,6 +91,17 @@ python -m examples.demo.server --port 8608     # the web demo
 The demo takes **PDF, DOCX, PPTX, HTML, TXT and Markdown** (non-PDF files are split into sections/slides instead of pages), shows each decision stage with probabilities, previews the cited PDF page, streams the answer, and has a sweep mode.
 
 Smaller setups: the 4B alone works for everything (re-rank hit@5 0.77 instead of 0.88); any OpenAI-compatible server that returns `logprobs` and supports guided choice can be the judge.
+
+## Many documents (a folder, a NAS share, a data lake)
+
+```bash
+ragnarok index /mnt/nas/share --store /data/ragnarok/store      # recursive, incremental (mtime/size); PDF/DOCX/PPTX/HTML/TXT/MD
+ragnarok ask   --store /data/ragnarok/store "What was total revenue in fiscal 2022?"   # searches across every indexed document
+ragnarok sweep --store /data/ragnarok/store "share repurchases"                        # every page that discusses the topic, across documents
+```
+
+All page embeddings live in one matrix (faiss is used automatically above 200k pages); candidates are capped per document for diversity; the decision options carry the document name, so one call ranks pages across documents and can abstain for the whole corpus.
+Measured on 110 documents / 17,418 pages without being told the document: FinanceBench document hit@1 0.75 → **0.87**, evidence page hit@5 0.53 → **0.75**; Japanese reports 0.32 → **0.64** / 0.39 → **0.65** (vector top-5 → ragnarok). The demo has a "search all documents" entry.
 
 ## What this is not (yet)
 

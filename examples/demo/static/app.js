@@ -26,6 +26,8 @@ async function showPage(p) { if (!cur) return; const d = await (await fetch(`/ap
   const img = $('#pimg'); if (cur.pdf && viewMode === 'image') { img.hidden = false; $('#ptext').hidden = true; img.src = `/api/page_image?doc=${encodeURIComponent(cur.id)}&p=${p}`; } else { img.hidden = true; $('#ptext').hidden = false; }
   $('#pview').hidden = !cur.pdf; }
 document.querySelectorAll('#pview button').forEach(b => b.onclick = () => { viewMode = b.dataset.v; document.querySelectorAll('#pview button').forEach(x => x.classList.toggle('on', x === b)); const m = $('#pno').textContent.match(/\d+/); if (m) showPage(+m[0] - 1); });
+$('#pimg').onclick = () => { const m = $('#pno').textContent.match(/\d+/); if (!m || !cur) return; $('#lbimg').src = `/api/page_image?doc=${encodeURIComponent(cur.id)}&p=${+m[0] - 1}&zoom=3`; $('#lightbox').hidden = false; };
+$('#lightbox').onclick = () => { $('#lightbox').hidden = true; };
 let tick = null; function startTick(label) { const el = $('#status'); const t0 = performance.now(); clearInterval(tick); tick = setInterval(() => { el.innerHTML = `<span class="spin"></span>${label} ${((performance.now() - t0) / 1000).toFixed(0)} 秒`; }, 200); }
 function stopTick(msg) { clearInterval(tick); $('#status').textContent = msg; }
 function cells(cands, vals, tops, gold) { const w = document.createElement('div'); w.className = 'cells';

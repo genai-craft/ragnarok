@@ -166,13 +166,39 @@ class Engine:
     def _snip(t: str, n: int = 300) -> str:
         return re.sub(r"\s+", " ", t)[:n]
 
+    @staticmethod
+    def _grams(s: str) -> set[str]:
+        s = re.sub(r"\s+", " ", s.lower())
+        words = set(re.findall(r"[a-z0-9][a-z0-9.%$-]{1,}", s))
+        cjk = re.sub(r"[^ぁ-んァ-ン一-龥ー]", "", s)
+        return words | {cjk[i:i+2] for i in range(len(cjk) - 1)}
+
+    @classmethod
+    def snip_for(cls, q: str, text: str, n: int = 360) -> str:
+        """質問に最も関係する窓を抜く (ページの先頭 300 字は見出しや定型文のことが多く、判定役が本文を見られない問題への対処)。
+        英語は単語、日本語は 2 文字の重なりで窓を採点。先頭の見出し行 (80 字) は常に添える。"""
+        t = re.sub(r"\s+", " ", text).strip()
+        if len(t) <= n:
+            return t
+        qg = cls._grams(q)
+        if not qg:
+            return t[:n]
+        step = max(60, n // 3); best, best_sc = 0, -1.0
+        for i in range(0, len(t) - n // 2, step):
+            w = t[i : i + n]; sc = len(qg & cls._grams(w))
+            if sc > best_sc:
+                best, best_sc = i, sc
+        head = t[:80]
+        body = t[best : best + n]
+        return body if best == 0 else f"{head} … {body}"
+
     def _state(self, ix: Index) -> str:
         kind = ix.meta.get("kind") or "document"
         return f"Document: {ix.name} ({kind})"
 
     async def _decide(self, ix: Index, q: str, cand: list[int], backend: LLMBackend, with_path: bool) -> Stage:
         t0 = time.perf_counter()
-        opts = [Option(f"p{p}", (f"[{ix.section_path(p)}] " if with_path and ix.tree else "") + f"page {p+1}: {self._snip(ix.pages[p])}") for p in cand]
+        opts = [Option(f"p{p}", (f"[{ix.section_path(p)}] " if with_path and ix.tree else "") + f"page {p+1}: {self.snip_for(q, ix.pages[p])}") for p in cand]
         opts.append(Option("none", "None of these pages contains the answer"))
         qq = Question("choice", f"Which page contains the information needed to answer this question?\nQuestion: {q}", opts)
         d = (await backend.adecide(self._state(ix), [qq]))[0]

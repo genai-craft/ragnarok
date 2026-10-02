@@ -9,6 +9,7 @@ import httpx, numpy as np
 from openvons.core.primitives import Option, Question
 from openvons.lm.backends.llm_backend import LLMBackend
 from ragnarok.tree import Doc, Node, tree_from_pageindex, outline_text
+from ragnarok.engine import Engine as _E
 from ragnarok.layout import tree_from_layout
 
 FB = "/data/jev-rag/financebench"
@@ -70,7 +71,7 @@ async def ret_emb(r):
 async def decide_pages(r, backend, cand, t=None):
     """候補ページを 1 回の確率判定で採点 (選択肢 + どれでもない)。戻り値 {page: p}。"""
     d = r["doc_name"]
-    opts = [Option(f"p{p}", (f"[{sec_path(t, p)}] " if t else "") + f"page {p+1}: {snippet(d, p)}") for p in cand]
+    opts = [Option(f"p{p}", (f"[{sec_path(t, p)}] " if t else "") + f"page {p+1}: {_E.snip_for(r['question'], pages(d)[p])}") for p in cand]
     opts.append(Option("none", "None of these pages contains the answer"))
     q = Question("choice", f"Which page contains the information needed to answer this question?\nQuestion: {r['question']}", opts)
     dec = (await backend.adecide(f"Document: {d} (an annual 10-K filing of {r['company']})", [q]))[0]
@@ -223,7 +224,7 @@ async def run(method):
     print(f"{method:16s}{' think' if THINK else ''} k={K} 根拠 hit@1 {sum(x['hit1'] for x in res)/n:.3f} hit@{K} {sum(x['hit'] for x in res)/n:.3f} 正解率 {sum(x['correct'] for x in res)/n:.3f} n={n} wall {time.time()-t0:.0f}s | "
           + " ".join(f"{k[:8]}:{sum(v)/len(v):.2f}" for k, v in by.items()), flush=True)
     if XENC_T: print(f"   cross-encoder 1 問あたり {np.mean(XENC_T):.2f}s (50 候補)", flush=True)
-    json.dump(res, open(f"{FB}/eval_{method}_k{K}{'_think' if THINK else ''}.json", "w"), ensure_ascii=False, indent=1)
+    json.dump(res, open(f"{FB}/eval_{method}_k{K}{'_think' if THINK else ''}{os.environ.get('EVAL_TAG','')}.json", "w"), ensure_ascii=False, indent=1)
 
 async def main():
     for m in METHODS: await run(m)

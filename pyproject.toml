@@ -12,6 +12,9 @@ dependencies = ["openvons", "numpy", "httpx", "pymupdf", "sentence-transformers>
 demo = ["fastapi", "uvicorn", "python-multipart"]
 bench = ["openai"]
 
+[project.scripts]
+ragnarok = "ragnarok.cli:main"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

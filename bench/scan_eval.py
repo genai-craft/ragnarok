@@ -36,9 +36,14 @@ def retrieve():
     gm = SentenceTransformer("google/embeddinggemma-2", device="cuda", model_kwargs={"torch_dtype": torch.bfloat16}); gm.max_seq_length = 2048
     emb = lambda ts: gm.encode([t[:6000] or " " for t in ts], prompt_name="document", batch_size=8, normalize_embeddings=True, show_progress_bar=False).astype(np.float32)
     E_ia = {d: emb(IA[d]) for d in DOCS}; E_ocr = {d: emb(OCR[d]) for d in DOCS}
+    extra = {}
+    for spec in [x for x in os.environ.get("OCR_EXTRA", "").split(",") if x]:
+        nm, dd = spec.split(":"); extra[nm] = {d: emb(json.load(open(f"{dd}/{d}.json"))["pages"]) for d in DOCS}
     rows = [json.loads(l) for l in open(f"{S}/qa.jsonl")]; qv = gm.encode([r["question"] for r in rows], prompt_name="query", normalize_embeddings=True, show_progress_bar=False).astype(np.float32)
     conds = {"画像のみ (OCR なし)": lambda d, v: IMG[d] @ v, "IA の OCR 文字層": lambda d, v: E_ia[d] @ v, "VLM (Qwen3-VL-8B) の OCR": lambda d, v: E_ocr[d] @ v,
              "画像 + 0.3·IA OCR": lambda d, v: IMG[d] @ v + 0.3 * (E_ia[d] @ v), "VLM OCR + 0.3·画像": lambda d, v: E_ocr[d] @ v + 0.3 * (IMG[d] @ v)}
+    for nm, E in extra.items():
+        conds[f"{nm} の OCR"] = (lambda E: lambda d, v: E[d] @ v)(E); conds[f"{nm} OCR + 0.3·画像"] = (lambda E: lambda d, v: E[d] @ v + 0.3 * (IMG[d] @ v))(E)
     out = {}
     for grp, sel in (("英語 (NH 町の年次報告)", lambda d: not ja(d)), ("日本語 (広島県水産試験場)", ja)):
         idx = [k for k, r in enumerate(rows) if sel(r["doc"])]; print(f"\n{grp}: {len(idx)} 問")
@@ -53,17 +58,33 @@ def retrieve():
     json.dump(out, open(f"{S}/retrieval.json", "w"))
 async def judge():
     rows = [json.loads(l) for l in open(f"{S}/qa.jsonl")]; ret = json.load(open(f"{S}/retrieval.json")); vlm = json.load(open(f"{S}/answers_vlm.json")) if os.path.exists(f"{S}/answers_vlm.json") else {}
+    extra_ans = {}
+    for spec in [x for x in os.environ.get("ANS_EXTRA", "").split(",") if x]:
+        nm, ff = spec.split(":"); extra_ans[nm] = json.load(open(ff))
+    extra_ocr = {}
+    for spec in [x for x in os.environ.get("OCR_EXTRA", "").split(",") if x]:
+        nm, dd = spec.split(":"); extra_ocr[nm] = {d: json.load(open(f"{dd}/{d}.json"))["pages"] for d in DOCS}
     async def one(k, r):
         pages = ret[str(k)]["ocr_top3"]; ctx = "\n\n".join(f"=== page {p+1} ===\n{OCR[r['doc']][p][:5000]}" for p in pages)
         a27 = await chat((f"以下は文書の抜粋 (OCR) です。抜粋だけを根拠に質問に簡潔に答えてください。\n\n{ctx}\n\n質問: {r['question']}\n答え:" if ja(r["doc"]) else f"Using only the excerpts below (OCR of a scanned report), answer briefly.\n\n{ctx}\n\nQuestion: {r['question']}\nAnswer:"), think=True)
         async def jd(ans):
             if not ans: return False
             t = await chat(f"Does the model answer state the same fact/number as the gold answer? Reply CORRECT or INCORRECT.\nQuestion: {r['question']}\nGold: {r['answer']}\nModel: {ans[:800]}", 5); return t.upper().startswith("CORRECT")
-        return {"doc": r["doc"], "ocr27b": await jd(a27), "vlm": await jd(vlm.get(str(k), "")), "has_vlm": str(k) in vlm}
+        res = {"doc": r["doc"], "ocr27b": await jd(a27), "vlm": await jd(vlm.get(str(k), "")), "has_vlm": str(k) in vlm}
+        for nm, A in extra_ans.items(): res[f"ans:{nm}"] = await jd(A.get(str(k), ""))
+        for nm, O in extra_ocr.items():
+            ctx2 = "\n\n".join(f"=== page {p+1} ===\n{O[r['doc']][p][:5000]}" for p in pages)
+            a2 = await chat((f"以下は文書の抜粋 (OCR) です。抜粋だけを根拠に質問に簡潔に答えてください。\n\n{ctx2}\n\n質問: {r['question']}\n答え:" if ja(r["doc"]) else f"Using only the excerpts below (OCR of a scanned report), answer briefly.\n\n{ctx2}\n\nQuestion: {r['question']}\nAnswer:"), think=True)
+            res[f"ocr:{nm}"] = await jd(a2)
+        return res
     res = await asyncio.gather(*[one(k, r) for k, r in enumerate(rows)])
     for grp, sel in (("英語", lambda d: not ja(d)), ("日本語", ja)):
         rr = [x for x in res if sel(x["doc"])]; n = len(rr)
-        print(f"{grp} (n={n}): 回答正解率  VLM OCR テキスト → 27B 思考あり {np.mean([x['ocr27b'] for x in rr]):.3f}" + (f"   画像検索 → Qwen3-VL-8B が画像を読んで回答 {np.mean([x['vlm'] for x in rr if x['has_vlm']]):.3f}" if any(x["has_vlm"] for x in rr) else ""))
+        line = f"{grp} (n={n}): VL-8B OCR → 27B 思考あり {np.mean([x['ocr27b'] for x in rr]):.3f}" + (f" | 画像 → VL-8B 回答 {np.mean([x['vlm'] for x in rr if x['has_vlm']]):.3f}" if any(x["has_vlm"] for x in rr) else "")
+        for key in rr[0]:
+            if key.startswith("ans:"): line += f" | 画像 → {key[4:]} 回答 {np.mean([x[key] for x in rr]):.3f}"
+            if key.startswith("ocr:"): line += f" | {key[4:]} OCR → 27B {np.mean([x[key] for x in rr]):.3f}"
+        print(line)
 if PH == "gen": asyncio.run(gen())
 elif PH == "retrieve": retrieve()
 else: asyncio.run(judge())

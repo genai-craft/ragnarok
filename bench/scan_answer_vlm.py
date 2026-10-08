@@ -4,6 +4,7 @@ import httpx, pymupdf
 from PIL import Image
 S = "/data/ragnarok/scans"; rows = [json.loads(l) for l in open(f"{S}/qa.jsonl")]; ret = json.load(open(f"{S}/retrieval.json")); src = {d: json.load(open(f"{S}/ocr/{d}.json"))["source"] for d in {r["doc"] for r in rows}}
 docs = {d: pymupdf.open(p) for d, p in src.items()}; C = httpx.AsyncClient(timeout=600); SEM = asyncio.Semaphore(8)
+MODEL = os.environ.get("VLM_MODEL", "qwen3-vl-8b"); OUT = os.environ.get("ANS_OUT", f"{S}/answers_vlm.json")
 def b64(img):
     buf = io.BytesIO(); img.save(buf, format="JPEG", quality=85); return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 async def one(k, r):
@@ -13,8 +14,8 @@ async def one(k, r):
     ja = r["doc"].startswith("hiroshima")
     content = [{"type": "image_url", "image_url": {"url": b64(im)}} for im in imgs] + [{"type": "text", "text": (f"これらは古い報告書のページです。ページの内容だけを根拠に、質問に簡潔に答えてください。\n質問: {r['question']}" if ja else f"These are pages of an old scanned report. Using only what is on the pages, answer briefly.\nQuestion: {r['question']}")}]
     async with SEM:
-        res = await C.post("http://127.0.0.1:8312/v1/chat/completions", json={"model": "qwen3-vl-8b", "max_tokens": 300, "temperature": 0, "messages": [{"role": "user", "content": content}]})
+        res = await C.post("http://127.0.0.1:8312/v1/chat/completions", json={"model": MODEL, "max_tokens": 400, "temperature": 0, "messages": [{"role": "user", "content": content}], "chat_template_kwargs": {"enable_thinking": False}})
     return str(k), res.json()["choices"][0]["message"]["content"]
 async def main():
-    out = dict(await asyncio.gather(*[one(k, r) for k, r in enumerate(rows)])); json.dump(out, open(f"{S}/answers_vlm.json", "w"), ensure_ascii=False, indent=1); print("done", len(out))
+    out = dict(await asyncio.gather(*[one(k, r) for k, r in enumerate(rows)])); json.dump(out, open(OUT, "w"), ensure_ascii=False, indent=1); print("done", len(out))
 asyncio.run(main())

@@ -230,3 +230,20 @@ FinanceBench 150 問、埋め込みは embeddinggemma-2 (+英語は画像 0.3 �
 - LLM なし (埋め込みのみ) でも根拠ページ hit@5 0.71 は出る = 「該当ページを出す」用途なら CPU だけで成立。棄却・判定・回答は無い。
 - `Engine.from_profile("full"|"light"|"tiny"|"nollm")`。VRAM 実測 (vLLM): 27B AWQ 34GB (util 0.5 設定)、4B 25GB (util 0.25 設定、実体は 8GB)、2B 15GB (util 0.15 設定、実体は 4GB) — 数字は設定値で膨らんでおり、必要量は括弧内。
 - openvons の「凍結小モデル + 学習 head」で 4B を 27B に近づける蒸留は失敗済 (長い選択肢に head 方式が向かない)。軽量化の現実解は light (4B) で、差は hit@5 で 9pt、正解率で 9pt。
+
+### GGUF (llama.cpp) の小型モデルは? — DavidAU の merge 版と素のモデル (2026-10-08)
+
+判定も回答も同じモデル。llama.cpp は `ragnarok.backends.LlamaCppBackend` (GBNF の grammar で選択肢を制約、top_logprobs を読む)。FinanceBench 150 問、採点は 27B。
+
+| モデル (量子化) | VRAM (全層 GPU、128k ctx) | 根拠 hit@1 / hit@5 | 回答正解率 | 備考 |
+|---|---|---|---|---|
+| 参考: Qwen3-4B bf16 (vLLM、light) | ~8GB | 0.56 / 0.82 | 0.64 (思考) | |
+| 参考: Qwen3.8-27B AWQ (full) | ~20GB | 0.60 / 0.91 | 0.73 (思考) | |
+| Qwen3.5-9B 素 (unsloth Q4_K_M) | 7.0GB | 0.48 / 0.83 | 0.53 (思考なし) / 0.55 (思考 8k、51 問が空) | 思考が長く 2.5k では 105 問が空になる |
+| Qwen3.5-9B "Defiant" (DavidAU NEO-MAX Q4_K_M) | 8.1GB | 0.51 / 0.85 | 0.57 (思考なし) / 0.65 (思考 2.5k、31 問が空) | 素より少し上 (+2〜3pt、思考ありは打ち切りの差も混ざる) |
+| LFM2.5-2.6B "NEO" (DavidAU IQ4_XS) | 4.5GB (CPU のみ 0.6GB) | 0.01 / **0.62** | 0.32 | 判定は埋め込み順 (0.71) より悪い = 判定役に使えない |
+| LFM2.5-2.6B 素 (Q4_K_M) | 4.4GB | 0.01 / 0.59 | 0.27 (思考、60 問が空) | 同上 |
+
+- **Qwen3.5-9B の Q4 は 4B bf16 (light) と同格** (検索は少し上、回答は同等)。Defiant merge は素より僅かに良いが、公開物で「uncensored」系 merge を既定にする理由はない。
+- **LFM2.5-2.6B は判定役として機能しない** (hit@1 0.01: 選択肢の記号をほぼ当てられない)。小ささは本物 (CPU だけで 25 択判定 2.0 秒、VRAM 0.6GB; GPU 10 層で 1.4 秒 / 1.8GB) だが、判定の中身が無い。
+- 判定役の下限が 4B という結論は変わらず。llama.cpp 経由でも同じ API で動くので、4GB 級なら Qwen3-4B の Q4 GGUF が現実解 (未測定)。

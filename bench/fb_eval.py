@@ -17,7 +17,9 @@ ROWS = [json.loads(l) for l in open(f"{FB}/repo/data/financebench_open_source.js
 METHODS = sys.argv[1].split(",") if len(sys.argv) > 1 else ["emb"]
 K = int(sys.argv[2]) if len(sys.argv) > 2 else 5
 C27 = httpx.AsyncClient(timeout=600); B4 = LLMBackend("http://127.0.0.1:8311/v1", "qwen3-4b", mode="logprob", concurrency=32); B27 = LLMBackend("http://127.0.0.1:8310/v1", "qwen27b", mode="logprob", concurrency=12)
-B2 = LLMBackend(os.environ.get("JUDGE2_URL", "http://127.0.0.1:8313/v1"), os.environ.get("JUDGE2_MODEL", "qwen3.5-2b"), mode="logprob", concurrency=48)
+from ragnarok.backends import LlamaCppBackend
+_B2cls = LlamaCppBackend if os.environ.get("JUDGE2_KIND") == "llamacpp" else LLMBackend
+B2 = _B2cls(os.environ.get("JUDGE2_URL", "http://127.0.0.1:8313/v1"), os.environ.get("JUDGE2_MODEL", "qwen3.5-2b"), mode="logprob", concurrency=int(os.environ.get("JUDGE2_CONC", "48")))
 ANS_URL = os.environ.get("ANS_URL", "http://127.0.0.1:8310/v1"); ANS_MODEL = os.environ.get("ANS_MODEL", "qwen27b")   # 回答器 (判定器 = 27B は固定)
 SEM27 = asyncio.Semaphore(12)
 _pages, _emb, _trees, _lay = {}, {}, {}, {}

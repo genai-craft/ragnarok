@@ -17,6 +17,8 @@ ROWS = [json.loads(l) for l in open(f"{FB}/repo/data/financebench_open_source.js
 METHODS = sys.argv[1].split(",") if len(sys.argv) > 1 else ["emb"]
 K = int(sys.argv[2]) if len(sys.argv) > 2 else 5
 C27 = httpx.AsyncClient(timeout=600); B4 = LLMBackend("http://127.0.0.1:8311/v1", "qwen3-4b", mode="logprob", concurrency=32); B27 = LLMBackend("http://127.0.0.1:8310/v1", "qwen27b", mode="logprob", concurrency=12)
+B2 = LLMBackend(os.environ.get("JUDGE2_URL", "http://127.0.0.1:8313/v1"), os.environ.get("JUDGE2_MODEL", "qwen3.5-2b"), mode="logprob", concurrency=48)
+ANS_URL = os.environ.get("ANS_URL", "http://127.0.0.1:8310/v1"); ANS_MODEL = os.environ.get("ANS_MODEL", "qwen27b")   # 回答器 (判定器 = 27B は固定)
 SEM27 = asyncio.Semaphore(12)
 _pages, _emb, _trees, _lay = {}, {}, {}, {}
 def lay(d) -> Doc:
@@ -180,7 +182,8 @@ async def ret_tree_gen(r, which="pi"):
 THINK = os.environ.get("ANS_THINK", "0") == "1"
 async def chat27(prompt, max_tokens=300, think=False):
     async with SEM27:
-        r = await C27.post("http://127.0.0.1:8310/v1/chat/completions", json={"model": "qwen27b", "messages": [{"role": "user", "content": prompt}], "max_tokens": (int(os.environ.get("ANS_TOKENS", "2500")) if think else max_tokens), "temperature": 0, "chat_template_kwargs": {"enable_thinking": think}})
+        url, model = (ANS_URL, ANS_MODEL) if max_tokens != 5 else ("http://127.0.0.1:8310/v1", "qwen27b")   # 採点だけは常に 27B
+        r = await C27.post(f"{url}/chat/completions", json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": (int(os.environ.get("ANS_TOKENS", "2500")) if think else max_tokens), "temperature": 0, "chat_template_kwargs": {"enable_thinking": think}})
     m = r.json()["choices"][0]["message"]; txt = (m.get("content") or "").strip()
     return txt.split("</think>")[-1].strip() if "</think>" in txt else txt
 
@@ -206,6 +209,8 @@ async def run(method):
             elif method == "rerank4b_n20": pgs, calls = await ret_rerank(r, B4, topn=20)
             elif method == "rerank27b_2st": pgs, calls = await ret_rerank(r, B27, topn=50)
             elif method == "rerank4b_2st": pgs, calls = await ret_rerank(r, B4, topn=50)
+            elif method == "rerank2b_2st": pgs, calls = await ret_rerank(r, B2, topn=50)
+            elif method == "rerank2b": pgs, calls = await ret_rerank(r, B2, topn=20)
             elif method == "rerank27b_2st+tree": pgs, calls = await ret_rerank(r, B27, topn=50, with_tree=True)
             elif method == "rerank_mix": pgs, calls = await ret_rerank_mix(r)
             elif method == "xenc50": pgs, calls = await ret_xenc(r, 50)

@@ -93,6 +93,19 @@ python -m examples.demo.server --port 8608     # Web デモ
 デモは **PDF / DOCX / PPTX / HTML / TXT / Markdown** を受け付け (PDF 以外はページの代わりに節・スライドで区切る)、判定の各段階を確率付きで表示し、根拠の PDF ページをプレビューし、回答をストリーミングし、網羅モードを持ちます。
 小さい構成なら 4B だけでも全部動きます (rerank の hit@5 は 0.88 → 0.77)。`logprobs` と guided choice を返す OpenAI 互換サーバーなら何でも判定役にできます。
 
+## 27B が無い環境で
+
+`Engine.from_profile("full" | "light" | "tiny" | "nollm")`。FinanceBench で実測 (埋め込み・採点は同じ):
+
+| profile | 判定 / 回答 | 根拠 hit@5 | 回答正解率 | GPU |
+|---|---|---|---|---|
+| full | Qwen3.8-27B / 27B | 0.91 | 0.73 | 24GB 級 (4bit) |
+| light | Qwen3-4B / 4B | 0.82 | 0.64 | 8GB 級 |
+| tiny | Qwen3.5-2B / 2B | 0.69 | 0.18 | 4GB 級 |
+| nollm | なし / なし (根拠ページを返す) | 0.71 | — | CPU のみ可 (索引 0.7 秒/頁) |
+
+判定役は 4B が下限 (2B の判定は埋め込み順と変わらない)。回答の質は回答役の大きさに比例する (2B → 4B → 27B で 0.18 → 0.64 → 0.73)。
+
 ## 埋め込みモデル
 
 既定は [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (Apache-2.0、100 言語以上、768d で Matryoshka 切り詰め可、**ページ画像を同じ空間に埋め込める** — 本文の無いページは画像で埋め込むので、スキャン PDF や図表が OCR なしで検索できる)。Qwen3-Embedding-0.6B との比較では英語は誤差の範囲、日本語は少し良く、候補の天井 recall@50 が 0.98 (FinanceBench) / 1.00 (有報) に上がる。`RAGNAROK_EMBED=Qwen/Qwen3-Embedding-0.6B` で戻せる。`Engine(embed_dim=256)` で記憶域を 1/4 に (精度ほぼ同じ)。 `Engine(image_pages=True)` で全ページを画像でも埋め込むと、英語の 10-K では融合スコア (text + 0.3·image) で候補 recall@5 +3pt。日本語文書は画像が足を引くので自動で 0 にする。 詳細: [bench/README.md](bench/README.md)。

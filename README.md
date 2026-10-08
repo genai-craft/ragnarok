@@ -92,6 +92,19 @@ The demo takes **PDF, DOCX, PPTX, HTML, TXT and Markdown** (non-PDF files are sp
 
 Smaller setups: the 4B alone works for everything (re-rank hit@5 0.77 instead of 0.88); any OpenAI-compatible server that returns `logprobs` and supports guided choice can be the judge.
 
+## Running without a 27B
+
+`Engine.from_profile("full" | "light" | "tiny" | "nollm")`. Measured on FinanceBench (same embeddings, same judge for scoring):
+
+| profile | judge / answerer | evidence hit@5 | answer accuracy | GPU |
+|---|---|---|---|---|
+| full | Qwen3.8-27B / 27B | 0.91 | 0.73 | ~24 GB (4-bit) |
+| light | Qwen3-4B / 4B | 0.82 | 0.64 | ~8 GB |
+| tiny | Qwen3.5-2B / 2B | 0.69 | 0.18 | ~4 GB |
+| nollm | none / none (returns pages) | 0.71 | — | CPU only (0.7 s/page to index) |
+
+A 4B judge is the floor — 2B decisions add nothing over embeddings. Answer quality scales with the answerer (2B → 4B → 27B: 0.18 → 0.64 → 0.73).
+
 ## Embedding model
 
 Default is [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (Apache-2.0, 100+ languages, 768d with Matryoshka truncation, and **page images embed into the same space** — pages with no text layer are embedded as images, so scanned PDFs and figures are searchable without OCR). Compared with Qwen3-Embedding-0.6B on our benchmarks the English results are equal within noise and Japanese is slightly better; candidate recall@50 rises to 0.98 (FinanceBench) / 1.00 (Japanese reports). Set `RAGNAROK_EMBED=Qwen/Qwen3-Embedding-0.6B` to switch back; `Engine(embed_dim=256)` cuts vector storage to a quarter at near-identical accuracy.  Add `Engine(image_pages=True)` to embed every page as an image as well: English filings gain candidate recall@5 +3pt from the fused score (text + 0.3·image); for CJK documents the image score is switched off because it hurts. Details: [bench/README.md](bench/README.md).

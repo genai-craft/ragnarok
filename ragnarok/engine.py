@@ -105,7 +105,20 @@ EMBED_PRESETS = {
 }
 
 
+# 環境別の構成。判定役と回答役は OpenAI 互換サーバーなら何でもよい (logprobs + guided choice が要る)。
+PROFILES = {
+    "full":  {"judge_model": "qwen27b", "judge_url": "http://127.0.0.1:8310/v1", "fast_model": "qwen3-4b", "fast_url": "http://127.0.0.1:8311/v1", "note": "27B 判定+回答 (GPU 24GB 以上、4bit)。FinanceBench 根拠 hit@5 0.90 / 正解 0.75"},
+    "light": {"judge_model": "qwen3-4b", "judge_url": "http://127.0.0.1:8311/v1", "fast_model": "qwen3-4b", "fast_url": "http://127.0.0.1:8311/v1", "note": "4B 判定+回答 (GPU 8GB 級)"},
+    "tiny":  {"judge_model": "qwen3.5-2b", "judge_url": "http://127.0.0.1:8313/v1", "fast_model": "qwen3.5-2b", "fast_url": "http://127.0.0.1:8313/v1", "note": "2B 判定+回答 (GPU 4GB 級 / Apple silicon)"},
+    "nollm": {"judge_model": None, "judge_url": None, "fast_model": None, "fast_url": None, "note": "LLM なし: 埋め込み (CPU 可) + キーワード。判定・棄却・回答は無し、根拠ページを返すだけ"},
+}
+
+
 class Engine:
+    @classmethod
+    def from_profile(cls, name: str = "full", **kw) -> "Engine":
+        p = dict(PROFILES[name]); p.pop("note", None); p.update(kw); e = cls(**p); e.profile = name; return e
+
     def __init__(self, embed_model: str | None = None, judge_url: str = "http://127.0.0.1:8310/v1", judge_model: str = "qwen27b",
                  fast_url: str = "http://127.0.0.1:8311/v1", fast_model: str = "qwen3-4b", answer_url: str | None = None, answer_model: str | None = None, device: str = "cuda",
                  embed_dim: int | None = None, image_fallback_chars: int = 200, image_pages: bool = False, vlm_url: str | None = None, vlm_model: str | None = None):
@@ -121,9 +134,10 @@ class Engine:
         self.image_pages = image_pages and can_img   # True なら全ページの画像埋め込みも持つ (ページあたり +28 ms、表の多い英語文書で候補 recall@5 +3pt)
         # スキャン (文字層の無いページ) の OCR: OpenAI 互換の VLM サーバー (例: vLLM の Qwen3-VL-8B、534 頁 9 分)。無ければ画像埋め込みだけで検索する
         self.vlm_url = (vlm_url or os.environ.get("RAGNAROK_VLM_URL") or "").rstrip("/") or None; self.vlm_model = vlm_model or os.environ.get("RAGNAROK_VLM_MODEL", "qwen3-vl-8b")
-        self.judge = LLMBackend(judge_url, judge_model, mode="logprob", concurrency=16)
-        self.fast = LLMBackend(fast_url, fast_model, mode="logprob", concurrency=64)
-        self.answer_url = (answer_url or judge_url).rstrip("/"); self.answer_model = answer_model or judge_model
+        self.profile = "custom"
+        self.judge = LLMBackend(judge_url, judge_model, mode="logprob", concurrency=16) if judge_url and judge_model else None
+        self.fast = LLMBackend(fast_url, fast_model, mode="logprob", concurrency=64) if fast_url and fast_model else self.judge
+        self.answer_url = ((answer_url or judge_url) or "").rstrip("/") or None; self.answer_model = answer_model or judge_model
         self.http = httpx.AsyncClient(timeout=600)
 
     # ---------------- OCR (VLM) ----------------
@@ -308,6 +322,9 @@ class Engine:
         qe = self.embed_query(q)
         sims = ix.sims(qe); order = [int(i) for i in np.argsort(-sims)[:topn]]
         stages: list[Stage] = []; pool: list[int] = []
+        if self.judge is None:   # LLM なし: 埋め込み順。棄却は最大類似度の閾値 (弱い)
+            top = float(sims[order[0]]) if order else 0.0
+            return Retrieval(order[:k], [], {int(p): float(sims[p]) for p in order}, 1.0 - top, top < 0.35, {p: ix.section_path(p) for p in order[:k]})
         if len(order) > group:
             b = self.fast if fast_first else self.judge
             res = await asyncio.gather(*[self._decide(ix, q, order[i : i + group], b, with_path) for i in range(0, len(order), group)])
@@ -346,6 +363,8 @@ class Engine:
         return f"{inst}\n\nDocument: {ix.name}\n\n{ctx}\n\nQuestion: {q}\nAnswer:"
 
     async def answer(self, ix: Index, q: str, pages: list[int], think: bool = True, lang: str = "auto") -> str:
+        if self.answer_url is None:   # LLM なし: 根拠ページの抜粋を返す
+            return "\n\n".join(f"[page {p+1}] {self.snip_for(q, ix.pages[p], 500)}" for p in pages)
         return await self.chat(self._answer_prompt(ix, q, pages, lang), think=think)
 
     async def answer_stream(self, ix: Index, q: str, pages: list[int], think: bool = True, lang: str = "auto"):

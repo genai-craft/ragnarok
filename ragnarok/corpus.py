@@ -135,6 +135,9 @@ class Corpus:
     async def retrieve(self, q: str, k: int = 5, topn: int = 50, group: int = 25, pool_each: int = 5, per_doc: int | None = 10, fast_first: bool = False, abstain_th: float = 0.5) -> CorpusRetrieval:
         cand = self.search_pages(q, topn, per_doc); pairs = [(d, p) for d, p, _ in cand]
         stages: list[Stage] = []; pool: list[tuple[str, int]] = []
+        if self.eng.judge is None:   # nollm: 埋め込み順のまま返す (判定・棄却の確率は無い。最上位の類似度が低ければ棄却扱い)
+            top = cand[0][2] if cand else 0.0
+            return CorpusRetrieval([CorpusHit(d, p, float(s)) for d, p, s in cand[:k]], [], 1.0 - top, top < 0.35, cand, len({d for d, _, _ in cand}))
         if len(pairs) > group:
             b = self.eng.fast if fast_first else self.eng.judge
             res = await asyncio.gather(*[self._decide(q, pairs[i:i+group], b) for i in range(0, len(pairs), group)])

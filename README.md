@@ -71,12 +71,12 @@ Decisions are made with openvons' `LLMBackend` (guided choice + first-token logp
 ```bash
 git clone https://github.com/genai-craft/ragnarok && cd ragnarok
 uv venv && uv pip install -e ".[demo]"
-# model servers (vLLM): 27B judge/answerer on :8310, 4B fast judge on :8311 — edit GPUs/models in the script
-JUDGE_GPU=0 FAST_GPU=0 scripts/serve_models.sh
+ragnarok up                                      # picks a tier from free VRAM + what's installed (vllm / llama-server), starts the model servers
+ragnarok status                                  # which tiers are alive, which one "auto" will use
 python - <<'PY'
 import asyncio
 from ragnarok.engine import Engine
-eng = Engine()                                   # Qwen3-Embedding-0.6B + the two vLLM servers above
+eng = Engine.from_profile()                      # "auto": the best tier whose servers are alive (no servers → nollm)
 ix = eng.index_pdf("your.pdf")                   # pages + embeddings + layout tree, no LLM
 async def main():
     r = await eng.retrieve(ix, "What was total revenue in fiscal 2022?")
@@ -90,21 +90,29 @@ python -m examples.demo.server --port 8608     # the web demo
 
 The demo takes **PDF, DOCX, PPTX, HTML, TXT and Markdown** (non-PDF files are split into sections/slides instead of pages), shows each decision stage with probabilities, previews the cited PDF page, streams the answer, and has a sweep mode.
 
-Smaller setups: the 4B alone works for everything (re-rank hit@5 0.77 instead of 0.88); any OpenAI-compatible server that returns `logprobs` and supports guided choice can be the judge.
+Any OpenAI-compatible server that returns `logprobs` can be the judge (vLLM with guided choice, or llama.cpp with a GBNF grammar via `kind="llamacpp"`); `scripts/serve_models.sh` / `scripts/serve_gguf.sh` start them by hand if you'd rather not use `ragnarok up`.
 
-## Running without a 27B
+## Pick a tier (or don't: `ragnarok up` picks)
 
-`Engine.from_profile("full" | "light" | "gguf" | "tiny" | "nollm")`. Measured on FinanceBench (same embeddings, same judge for scoring):
+Four tiers, all measured on FinanceBench with the same embeddings and the same 27B scorer. The rule: **27B if it fits, otherwise a 4B, otherwise embeddings only.**
 
-| profile | judge / answerer | evidence hit@5 | answer accuracy | GPU |
+| tier | judge / answerer | evidence hit@5 | answer accuracy | needs |
 |---|---|---|---|---|
-| full | Qwen3.8-27B / 27B | 0.91 | 0.73 | ~24 GB (4-bit) |
-| light | Qwen3-4B / 4B | 0.82 | 0.64 | ~8 GB |
-| gguf | Qwen3.5-4B Q3_K_M / Qwen3-4B Q4_K_M (llama.cpp) | 0.84 | 0.63 | 4.8 GB of weights (7.4 GB at 8k ctx; judge alone 3.2 GB) |
-| tiny | Qwen3.5-2B / 2B | 0.69 | 0.18 | ~4 GB |
-| nollm | none / none (returns pages) | 0.71 | — | CPU only (0.7 s/page to index) |
+| full | Qwen3.8-27B / 27B (vLLM) | 0.91 | 0.73 | GPU ≥ 24 GB, `vllm` |
+| light | Qwen3-4B / 4B (vLLM) | 0.82 | 0.64 | GPU ≥ 10 GB, `vllm` |
+| gguf | Qwen3.5-4B Q3_K_M / Qwen3-4B Q4_K_M (llama.cpp) | 0.84 | 0.63 | GPU ≥ 8 GB, `llama-server` (judge only: 4 GB, accuracy 0.49) |
+| nollm | none / none (returns candidate pages) | 0.71 | — | CPU |
 
-A 4B judge is the floor — 2B decisions add nothing over embeddings. Answer quality scales with the answerer (2B → 4B → 27B: 0.18 → 0.64 → 0.73). Quantization is nearly free at 4B: Qwen3.5-4B keeps its judge quality down to Q3_K_M (2.3 GB, hit@5 0.84; Q2 drops to 0.75) and Qwen3-4B Q4_K_M answers as well as bf16 — the `gguf` profile pairs the two on llama.cpp (`scripts/serve_gguf.sh`). Full table in [bench/README.md](bench/README.md).
+```bash
+ragnarok up            # auto: full if ≥ 24 GB free and vllm is installed, else gguf (llama-server) or light (vllm), else nollm
+ragnarok up gguf       # or name the tier; --gpu N, --judge-only for a 4 GB card
+ragnarok status        # what is alive; what Engine.from_profile("auto") will choose
+ragnarok down
+```
+
+`Engine.from_profile("auto")` (the default) uses the best tier whose servers answer, and falls back to the judge for any missing fast/answer server. Pin a tier with `Engine.from_profile("gguf")`, `--profile gguf` on the CLI, or `RAGNAROK_PROFILE=gguf`. `ragnarok up` downloads the GGUFs on first use (`RAGNAROK_GGUF_DIR`), finds `vllm` / `llama-server` on PATH or via `RAGNAROK_VLLM` / `RAGNAROK_LLAMA_SERVER`, and writes logs under `~/.cache/ragnarok/logs/`.
+
+Why these four: a 4B judge is the floor (2B decisions add nothing over embeddings), answer quality scales with the answerer (2B → 4B → 27B: 0.18 → 0.64 → 0.73), and 4B quantization is nearly free (Qwen3.5-4B keeps its judge quality down to Q3_K_M, Qwen3-4B Q4_K_M answers like bf16). Every variant we tried, including light2 (Qwen3.5-4B judge + Qwen3-4B answerer, hit@5 0.87) and the 2B/9B/merge GGUFs, is in [bench/README.md](bench/README.md).
 
 ## Embedding model
 

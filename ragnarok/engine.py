@@ -106,20 +106,23 @@ EMBED_PRESETS = {
 
 
 # 環境別の構成。判定役と回答役は OpenAI 互換サーバーなら何でもよい (logprobs + guided choice が要る)。
-PROFILES = {
-    "full":  {"judge_model": "qwen27b", "judge_url": "http://127.0.0.1:8310/v1", "fast_model": "qwen3-4b", "fast_url": "http://127.0.0.1:8311/v1", "note": "27B 判定+回答 (GPU 24GB 以上、4bit)。FinanceBench 根拠 hit@5 0.90 / 正解 0.75"},
-    "light": {"judge_model": "qwen3-4b", "judge_url": "http://127.0.0.1:8311/v1", "fast_model": "qwen3-4b", "fast_url": "http://127.0.0.1:8311/v1", "note": "4B 判定+回答 (GPU 8GB 級)。判定は Qwen3.5-4B の方が良く (hit@5 0.87)、回答は Qwen3-4B の方が良い (0.64) → light2 参照"},
-    "light2": {"judge_model": "qwen3.5-4b", "judge_url": "http://127.0.0.1:8313/v1", "fast_model": "qwen3.5-4b", "fast_url": "http://127.0.0.1:8313/v1", "answer_model": "qwen3-4b", "answer_url": "http://127.0.0.1:8311/v1", "note": "判定 Qwen3.5-4B + 回答 Qwen3-4B (2 モデル、計 16GB bf16)"},
-    "gguf":  {"kind": "llamacpp", "judge_model": "q354-q3", "judge_url": "http://127.0.0.1:8320/v1", "fast_model": "q354-q3", "fast_url": "http://127.0.0.1:8320/v1", "answer_model": "q34-q4", "answer_url": "http://127.0.0.1:8321/v1", "note": "llama.cpp: 判定 Qwen3.5-4B Q3_K_M (2.3GB) + 回答 Qwen3-4B Q4_K_M (2.5GB)。8k ctx で計 7.4GB、判定だけなら 3.2GB (4GB 級)。scripts/serve_gguf.sh。FinanceBench 根拠 hit@5 0.84 / 正解 0.63"},
-    "tiny":  {"judge_model": "qwen3.5-2b", "judge_url": "http://127.0.0.1:8313/v1", "fast_model": "qwen3.5-2b", "fast_url": "http://127.0.0.1:8313/v1", "note": "2B 判定+回答 (GPU 4GB 級 / Apple silicon)"},
-    "nollm": {"judge_model": None, "judge_url": None, "fast_model": None, "fast_url": None, "note": "LLM なし: 埋め込み (CPU 可) + キーワード。判定・棄却・回答は無し、根拠ページを返すだけ"},
-}
+from .profiles import PROFILES  # noqa: E402  (段の定義・自動選択・起動は profiles.py)
 
 
 class Engine:
+    # subclass が __init__ を呼ばずに emb / judge だけ差し込んでも動くよう、属性の既定をクラスに置く (言箱の LocalEngine など)
+    q_prompt = "query"; d_prompt = None; can_image = False; embed_dim = None; image_fallback_chars = 200; image_pages = False
+    vlm_url = None; vlm_model = "qwen3-vl-8b"; profile = "custom"; embed_model = "custom"; fast = None; answer_url = None; answer_model = None
+
     @classmethod
-    def from_profile(cls, name: str = "full", **kw) -> "Engine":
-        p = dict(PROFILES[name]); p.pop("note", None); p.update(kw); e = cls(**p); e.profile = name; return e
+    def from_profile(cls, name: str = "auto", **kw) -> "Engine":
+        """name: "auto" (生きているサーバーから最良の段を選ぶ、無ければ nollm) | "full" | "light" | "gguf" | "nollm" | …。
+        既定は環境変数 RAGNAROK_PROFILE、無ければ auto。足りないサーバー (fast / answer) は判定役で代用する。"""
+        from .profiles import resolve
+        name = name or os.environ.get("RAGNAROK_PROFILE", "auto")
+        if name == "auto":
+            name = os.environ.get("RAGNAROK_PROFILE", "auto")
+        name, p = resolve(name); p.update(kw); e = cls(**p); e.profile = name; return e
 
     def __init__(self, embed_model: str | None = None, judge_url: str = "http://127.0.0.1:8310/v1", judge_model: str = "qwen27b",
                  fast_url: str = "http://127.0.0.1:8311/v1", fast_model: str = "qwen3-4b", answer_url: str | None = None, answer_model: str | None = None, device: str = "cuda",

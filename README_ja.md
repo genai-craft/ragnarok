@@ -73,12 +73,12 @@ FinanceBench 公開セット (150 問、10-K 84 冊 12,013 ページ)。回答�
 ```bash
 git clone https://github.com/genai-craft/ragnarok && cd ragnarok
 uv venv && uv pip install -e ".[demo]"
-# モデルサーバー (vLLM): 判定・回答の 27B を :8310、速い判定の 4B を :8311 — GPU とモデルはスクリプト内の環境変数で
-JUDGE_GPU=0 FAST_GPU=0 scripts/serve_models.sh
+ragnarok up                                      # 空き VRAM と入っているもの (vllm / llama-server) から段を選んでモデルサーバーを立てる
+ragnarok status                                  # どの段が生きているか、auto が何を選ぶか
 python - <<'PY'
 import asyncio
 from ragnarok.engine import Engine
-eng = Engine()                                   # Qwen3-Embedding-0.6B + 上の 2 サーバー
+eng = Engine.from_profile()                      # "auto": 生きているサーバーから最良の段 (無ければ nollm)
 ix = eng.index_pdf("your.pdf")                   # ページ + 埋め込み + レイアウト木 (LLM なし)
 async def main():
     r = await eng.retrieve(ix, "2022 年度の売上高は？")
@@ -91,21 +91,29 @@ python -m examples.demo.server --port 8608     # Web デモ
 ```
 
 デモは **PDF / DOCX / PPTX / HTML / TXT / Markdown** を受け付け (PDF 以外はページの代わりに節・スライドで区切る)、判定の各段階を確率付きで表示し、根拠の PDF ページをプレビューし、回答をストリーミングし、網羅モードを持ちます。
-小さい構成なら 4B だけでも全部動きます (rerank の hit@5 は 0.88 → 0.77)。`logprobs` と guided choice を返す OpenAI 互換サーバーなら何でも判定役にできます。
+`logprobs` を返す OpenAI 互換サーバーなら何でも判定役にできます (vLLM は guided choice、llama.cpp は `kind="llamacpp"` で GBNF の grammar)。`ragnarok up` を使わず手で立てるなら `scripts/serve_models.sh` / `scripts/serve_gguf.sh`。
 
-## 27B が無い環境で
+## 段を選ぶ (選ばなくてもいい: `ragnarok up` が選ぶ)
 
-`Engine.from_profile("full" | "light" | "gguf" | "tiny" | "nollm")`。FinanceBench で実測 (埋め込み・採点は同じ):
+4 段。全部 FinanceBench で同じ埋め込み・同じ 27B 採点で測った数字。決め方は **27B が載るなら 27B、載らなければ 4B、GPU が無ければ埋め込みだけ**。
 
-| profile | 判定 / 回答 | 根拠 hit@5 | 回答正解率 | GPU |
+| 段 | 判定 / 回答 | 根拠 hit@5 | 回答正解率 | 必要なもの |
 |---|---|---|---|---|
-| full | Qwen3.8-27B / 27B | 0.91 | 0.73 | 24GB 級 (4bit) |
-| light | Qwen3-4B / 4B | 0.82 | 0.64 | 8GB 級 |
-| gguf | Qwen3.5-4B Q3_K_M / Qwen3-4B Q4_K_M (llama.cpp) | 0.84 | 0.63 | 重み 4.8GB (8k ctx で 7.4GB、判定だけなら 3.2GB) |
-| tiny | Qwen3.5-2B / 2B | 0.69 | 0.18 | 4GB 級 |
-| nollm | なし / なし (根拠ページを返す) | 0.71 | — | CPU のみ可 (索引 0.7 秒/頁) |
+| full | Qwen3.8-27B / 27B (vLLM) | 0.91 | 0.73 | GPU 24GB 以上、`vllm` |
+| light | Qwen3-4B / 4B (vLLM) | 0.82 | 0.64 | GPU 10GB 以上、`vllm` |
+| gguf | Qwen3.5-4B Q3_K_M / Qwen3-4B Q4_K_M (llama.cpp) | 0.84 | 0.63 | GPU 8GB 以上、`llama-server` (判定だけなら 4GB、正解率 0.49) |
+| nollm | なし / なし (根拠ページ候補を返す) | 0.71 | — | CPU |
 
-判定役は 4B が下限 (2B の判定は埋め込み順と変わらない)。回答の質は回答役の大きさに比例する (2B → 4B → 27B で 0.18 → 0.64 → 0.73)。4B の量子化はほぼ無料: Qwen3.5-4B は Q3_K_M (2.3GB) まで判定の質が保たれ (hit@5 0.84、Q2 で 0.75 に落ちる)、Qwen3-4B Q4_K_M の回答は bf16 と同等。`gguf` profile はこの 2 つを llama.cpp で組む (`scripts/serve_gguf.sh`)。表は [bench/README.md](bench/README.md)。
+```bash
+ragnarok up            # auto: 空き 24GB 以上で vllm があれば full、無ければ gguf (llama-server) か light (vllm)、どれも無ければ nollm
+ragnarok up gguf       # 段を指定も可。--gpu N、4GB のカードなら --judge-only
+ragnarok status        # 何が生きているか、Engine.from_profile("auto") が何を選ぶか
+ragnarok down
+```
+
+`Engine.from_profile("auto")` (既定) は生きているサーバーから最良の段を使い、足りない速い判定役・回答役は判定役で代用します。固定するなら `Engine.from_profile("gguf")`、CLI の `--profile gguf`、環境変数 `RAGNAROK_PROFILE=gguf`。`ragnarok up` は初回に GGUF を取得し (`RAGNAROK_GGUF_DIR`)、`vllm` / `llama-server` は PATH か `RAGNAROK_VLLM` / `RAGNAROK_LLAMA_SERVER` で探し、ログは `~/.cache/ragnarok/logs/` に書きます。
+
+この 4 段にした理由: 判定役は 4B が下限 (2B の判定は埋め込み順と変わらない)、回答の質は回答役の大きさに比例 (2B → 4B → 27B で 0.18 → 0.64 → 0.73)、4B の量子化はほぼ無料 (Qwen3.5-4B は Q3_K_M まで判定の質が保たれ、Qwen3-4B Q4_K_M の回答は bf16 と同等)。試した他の構成 — light2 (判定 Qwen3.5-4B + 回答 Qwen3-4B、hit@5 0.87)、2B/9B/merge の GGUF — は [bench/README.md](bench/README.md) にあります。
 
 ## 埋め込みモデル
 

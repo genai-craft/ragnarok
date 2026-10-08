@@ -6,7 +6,7 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 authors = [{ name = "Satoshi Toriumi", email = "satoshi.toriumi.3@futurestandard.co.jp" }]
-dependencies = ["openvons", "numpy", "httpx", "pymupdf", "sentence-transformers>=3.0"]
+dependencies = ["openvons", "numpy", "httpx", "pymupdf", "sentence-transformers>=3.0", "huggingface_hub"]
 
 [project.optional-dependencies]
 demo = ["fastapi", "uvicorn", "python-multipart"]

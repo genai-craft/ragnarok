@@ -50,8 +50,8 @@ def build_corpus():
 
 @app.on_event("startup")
 def _start():
-    G["engine"] = Engine(); G["docs"] = load_docs(); G["corpus"] = build_corpus()
-    print(f"{len(G['docs'])} docs loaded", flush=True)
+    G["engine"] = Engine.from_profile(os.environ.get("RAGNAROK_PROFILE", "auto")); G["docs"] = load_docs(); G["corpus"] = build_corpus()
+    print(f"profile={G['engine'].profile}  {len(G['docs'])} docs loaded", flush=True)
 
 
 @app.get("/healthz")

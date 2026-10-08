@@ -8,7 +8,7 @@ def b64(img):
     buf = io.BytesIO(); img.save(buf, format="JPEG", quality=85); return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 async def ocr(img):
     async with SEM:
-        r = await C.post("http://127.0.0.1:8312/v1/chat/completions", json={"model": MODEL, "max_tokens": 1800, "temperature": 0,
+        r = await C.post(os.environ.get("VLM_URL", "http://127.0.0.1:8312/v1") + "/chat/completions", json={"model": MODEL, "max_tokens": 1800, "temperature": 0,
             "messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": b64(img)}}, {"type": "text", "text": "Transcribe all the text on this page exactly as printed, preserving tables as rows (cells separated by ' | '). Output the text only."}]}]})
     return r.json()["choices"][0]["message"]["content"]
 async def main():

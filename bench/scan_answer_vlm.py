@@ -14,7 +14,7 @@ async def one(k, r):
     ja = r["doc"].startswith("hiroshima")
     content = [{"type": "image_url", "image_url": {"url": b64(im)}} for im in imgs] + [{"type": "text", "text": (f"これらは古い報告書のページです。ページの内容だけを根拠に、質問に簡潔に答えてください。\n質問: {r['question']}" if ja else f"These are pages of an old scanned report. Using only what is on the pages, answer briefly.\nQuestion: {r['question']}")}]
     async with SEM:
-        res = await C.post("http://127.0.0.1:8312/v1/chat/completions", json={"model": MODEL, "max_tokens": 400, "temperature": 0, "messages": [{"role": "user", "content": content}], "chat_template_kwargs": {"enable_thinking": False}})
+        res = await C.post(os.environ.get("VLM_URL", "http://127.0.0.1:8312/v1") + "/chat/completions", json={"model": MODEL, "max_tokens": 400, "temperature": 0, "messages": [{"role": "user", "content": content}], "chat_template_kwargs": {"enable_thinking": False}})
     return str(k), res.json()["choices"][0]["message"]["content"]
 async def main():
     out = dict(await asyncio.gather(*[one(k, r) for k, r in enumerate(rows)])); json.dump(out, open(OUT, "w"), ensure_ascii=False, indent=1); print("done", len(out))

@@ -96,7 +96,7 @@ class Corpus:
         mats, rows = [], []
         for did in self.manifest:
             ix = self.load(did); mats.append(ix.emb.astype(np.float32)); rows += [(did, p) for p in range(len(ix.pages))]
-        self._mat = np.concatenate(mats) if mats else np.zeros((0, 1024), np.float32); self._rows = rows
+        self._mat = np.concatenate(mats) if mats else np.zeros((0, 1), np.float32); self._rows = rows
         if len(rows) > 200_000:
             try:
                 import faiss
@@ -107,7 +107,7 @@ class Corpus:
     def search_pages(self, q: str, topn: int = 50, per_doc: int | None = None) -> list[tuple[str, int, float]]:
         """全文書を横断してページ候補。per_doc で 1 文書あたりの上限 (多様性)。"""
         self._matrix()
-        qe = self.eng.emb.encode([q], prompt_name="query", normalize_embeddings=True, show_progress_bar=False)[0].astype(np.float32)
+        qe = self.eng.embed_query(q)
         if self._faiss is not None:
             sc, ii = self._faiss.search(qe[None], topn * 4); order = [(int(i), float(s)) for s, i in zip(sc[0], ii[0]) if i >= 0]
         else:

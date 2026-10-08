@@ -33,7 +33,7 @@ def pages(d):
     if d not in _pages: _pages[d] = json.load(open(f"{FB}/pages/{d}.json"))
     return _pages[d]
 def emb(d):
-    if d not in _emb: _emb[d] = np.load(f"{FB}/emb/{d}.npy")
+    if d not in _emb: _emb[d] = np.load(f"{FB}/{os.environ.get('EMB_DIR', 'emb')}/{d}.npy")
     return _emb[d]
 def tree(d) -> Doc | None:
     if d not in _trees:
@@ -48,8 +48,8 @@ def qemb(q):
     global _qm
     if _qm is None:
         from sentence_transformers import SentenceTransformer
-        _qm = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B", device="cuda")
-    return _qm.encode([q], prompt_name="query", normalize_embeddings=True, show_progress_bar=False)[0]
+        _qm = _E(embed_model=os.environ.get("RAGNAROK_EMBED", "Qwen/Qwen3-Embedding-0.6B"))
+    return _qm.embed_query(q)
 
 def snippet(d, p, n=300):
     return re.sub(r"\s+", " ", pages(d)[p])[:n]

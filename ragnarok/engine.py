@@ -74,15 +74,48 @@ class Index:
         return " > ".join(best)
 
 
+EMBED_PRESETS = {
+    # name: (query prompt, document prompt, dtype, 画像を埋め込めるか)
+    "google/embeddinggemma-2": ("query", "document", "bfloat16", True),
+    "Qwen/Qwen3-Embedding-0.6B": ("query", None, None, False),
+}
+
+
 class Engine:
-    def __init__(self, embed_model: str = "Qwen/Qwen3-Embedding-0.6B", judge_url: str = "http://127.0.0.1:8310/v1", judge_model: str = "qwen27b",
-                 fast_url: str = "http://127.0.0.1:8311/v1", fast_model: str = "qwen3-4b", answer_url: str | None = None, answer_model: str | None = None, device: str = "cuda"):
+    def __init__(self, embed_model: str | None = None, judge_url: str = "http://127.0.0.1:8310/v1", judge_model: str = "qwen27b",
+                 fast_url: str = "http://127.0.0.1:8311/v1", fast_model: str = "qwen3-4b", answer_url: str | None = None, answer_model: str | None = None, device: str = "cuda",
+                 embed_dim: int | None = None, image_fallback_chars: int = 200):
+        """embed_model: 既定は RAGNAROK_EMBED か google/embeddinggemma-2 (Apache-2.0、多言語、ページ画像も同じ空間に埋め込める)。
+        embed_dim: Matryoshka で先頭 N 次元に切り詰める (256 で記憶域 1/3、精度ほぼ同じ)。image_fallback_chars: 本文がこの文字数未満のページ (スキャン・図) は画像で埋め込む。"""
+        import torch
         from sentence_transformers import SentenceTransformer
-        self.emb = SentenceTransformer(embed_model, device=device); self.emb.max_seq_length = 2048
+        self.embed_model = embed_model or os.environ.get("RAGNAROK_EMBED", "google/embeddinggemma-2")
+        qp, dp, dtype, can_img = EMBED_PRESETS.get(self.embed_model, ("query", None, None, False))
+        kw = {"model_kwargs": {"torch_dtype": getattr(torch, dtype)}} if dtype else {}
+        self.emb = SentenceTransformer(self.embed_model, device=device, **kw); self.emb.max_seq_length = 2048
+        self.q_prompt, self.d_prompt, self.can_image, self.embed_dim, self.image_fallback_chars = qp, dp, can_img, embed_dim, image_fallback_chars
         self.judge = LLMBackend(judge_url, judge_model, mode="logprob", concurrency=16)
         self.fast = LLMBackend(fast_url, fast_model, mode="logprob", concurrency=64)
         self.answer_url = (answer_url or judge_url).rstrip("/"); self.answer_model = answer_model or judge_model
         self.http = httpx.AsyncClient(timeout=600)
+
+    # ---------------- 埋め込み ----------------
+    def _norm(self, v: np.ndarray) -> np.ndarray:
+        v = np.asarray(v, dtype=np.float32)
+        if self.embed_dim: v = v[:, : self.embed_dim]
+        return v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-9)
+
+    def embed_docs(self, texts: list[str]) -> np.ndarray:
+        kw = {"prompt_name": self.d_prompt} if self.d_prompt else {}
+        return self._norm(self.emb.encode([t[:6000] or " " for t in texts], batch_size=8, normalize_embeddings=True, show_progress_bar=False, **kw))
+
+    def embed_query(self, q: str) -> np.ndarray:
+        kw = {"prompt_name": self.q_prompt} if self.q_prompt else {}
+        return self._norm(self.emb.encode([q], normalize_embeddings=True, show_progress_bar=False, **kw))[0]
+
+    def embed_images(self, images) -> np.ndarray:
+        kw = {"prompt_name": self.d_prompt} if self.d_prompt else {}
+        return self._norm(self.emb.encode(images, batch_size=4, normalize_embeddings=True, show_progress_bar=False, **kw))
 
     # ---------------- 索引 ----------------
     def index_pdf(self, pdf: str, name: str | None = None, tree: bool = True) -> Index:
@@ -90,7 +123,16 @@ class Engine:
         name = name or os.path.basename(pdf).rsplit(".", 1)[0]
         with pymupdf.open(pdf) as d:
             pages = [p.get_text() for p in d]
-        emb = self.emb.encode([p[:6000] or " " for p in pages], batch_size=8, normalize_embeddings=True, show_progress_bar=False)
+            # 本文の無い/少ないページ (スキャン・図表) は画像で埋め込む (同じ空間なので文章の質問で引ける)
+            low = [i for i, p in enumerate(pages) if len(p.strip()) < self.image_fallback_chars] if self.can_image else []
+            imgs = []
+            if low:
+                from PIL import Image
+                for i in low:
+                    px = d[i].get_pixmap(matrix=pymupdf.Matrix(1.0, 1.0)); imgs.append(Image.frombytes("RGB", (px.width, px.height), px.samples))
+        emb = self.embed_docs(pages)
+        if imgs:
+            emb[low] = self.embed_images(imgs)
         t = None
         if tree:
             try:
@@ -158,8 +200,7 @@ class Engine:
         ix.meta.update({"source": path, "format": kind, "unit": "slide" if kind == "pptx" else "section"}); return ix
 
     def index_pages(self, name: str, pages: list[str]) -> Index:
-        emb = self.emb.encode([p[:6000] or " " for p in pages], batch_size=8, normalize_embeddings=True, show_progress_bar=False)
-        return Index(name, pages, emb.astype(np.float32), None, {"pages": len(pages)})
+        return Index(name, pages, self.embed_docs(pages), None, {"pages": len(pages), "embed": self.embed_model})
 
     # ---------------- 検索 ----------------
     @staticmethod
@@ -207,7 +248,7 @@ class Engine:
 
     async def retrieve(self, ix: Index, q: str, k: int = 5, topn: int = 50, group: int = 25, pool_each: int = 5, fast_first: bool = False, with_path: bool = False,
                        abstain_th: float = 0.5) -> Retrieval:
-        qe = self.emb.encode([q], prompt_name="query", normalize_embeddings=True, show_progress_bar=False)[0]
+        qe = self.embed_query(q)
         sims = ix.emb @ qe; order = [int(i) for i in np.argsort(-sims)[:topn]]
         stages: list[Stage] = []; pool: list[int] = []
         if len(order) > group:

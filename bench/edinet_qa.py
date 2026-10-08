@@ -39,7 +39,7 @@ async def eval_():
     async def one(r):
         ix = IX[r["doc"]]
         async with sem:
-            qe = eng.emb.encode([r["question"]], prompt_name="query", normalize_embeddings=True, show_progress_bar=False)[0]; order = [int(i) for i in np.argsort(-(ix.emb @ qe))]
+            qe = eng.embed_query(r["question"]); order = [int(i) for i in np.argsort(-(ix.emb @ qe))]
             ret = await eng.retrieve(ix, r["question"], k=5)
             ret4 = await eng.retrieve(ix, r["question"], k=5, fast_first=True)
             ans = await eng.answer(ix, r["question"], ret.pages, think=True)

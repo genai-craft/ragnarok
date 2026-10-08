@@ -92,6 +92,10 @@ The demo takes **PDF, DOCX, PPTX, HTML, TXT and Markdown** (non-PDF files are sp
 
 Smaller setups: the 4B alone works for everything (re-rank hit@5 0.77 instead of 0.88); any OpenAI-compatible server that returns `logprobs` and supports guided choice can be the judge.
 
+## Embedding model
+
+Default is [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (Apache-2.0, 100+ languages, 768d with Matryoshka truncation, and **page images embed into the same space** — pages with no text layer are embedded as images, so scanned PDFs and figures are searchable without OCR). Compared with Qwen3-Embedding-0.6B on our benchmarks the English results are equal within noise and Japanese is slightly better; candidate recall@50 rises to 0.98 (FinanceBench) / 1.00 (Japanese reports). Set `RAGNAROK_EMBED=Qwen/Qwen3-Embedding-0.6B` to switch back; `Engine(embed_dim=256)` cuts vector storage to a quarter at near-identical accuracy. Details: [bench/README.md](bench/README.md).
+
 ## Many documents (a folder, a NAS share, a data lake)
 
 ```bash

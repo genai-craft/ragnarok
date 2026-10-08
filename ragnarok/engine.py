@@ -108,7 +108,8 @@ EMBED_PRESETS = {
 # 環境別の構成。判定役と回答役は OpenAI 互換サーバーなら何でもよい (logprobs + guided choice が要る)。
 PROFILES = {
     "full":  {"judge_model": "qwen27b", "judge_url": "http://127.0.0.1:8310/v1", "fast_model": "qwen3-4b", "fast_url": "http://127.0.0.1:8311/v1", "note": "27B 判定+回答 (GPU 24GB 以上、4bit)。FinanceBench 根拠 hit@5 0.90 / 正解 0.75"},
-    "light": {"judge_model": "qwen3-4b", "judge_url": "http://127.0.0.1:8311/v1", "fast_model": "qwen3-4b", "fast_url": "http://127.0.0.1:8311/v1", "note": "4B 判定+回答 (GPU 8GB 級)"},
+    "light": {"judge_model": "qwen3-4b", "judge_url": "http://127.0.0.1:8311/v1", "fast_model": "qwen3-4b", "fast_url": "http://127.0.0.1:8311/v1", "note": "4B 判定+回答 (GPU 8GB 級)。判定は Qwen3.5-4B の方が良く (hit@5 0.87)、回答は Qwen3-4B の方が良い (0.64) → light2 参照"},
+    "light2": {"judge_model": "qwen3.5-4b", "judge_url": "http://127.0.0.1:8313/v1", "fast_model": "qwen3.5-4b", "fast_url": "http://127.0.0.1:8313/v1", "answer_model": "qwen3-4b", "answer_url": "http://127.0.0.1:8311/v1", "note": "判定 Qwen3.5-4B + 回答 Qwen3-4B (2 モデル、計 16GB bf16)"},
     "tiny":  {"judge_model": "qwen3.5-2b", "judge_url": "http://127.0.0.1:8313/v1", "fast_model": "qwen3.5-2b", "fast_url": "http://127.0.0.1:8313/v1", "note": "2B 判定+回答 (GPU 4GB 級 / Apple silicon)"},
     "nollm": {"judge_model": None, "judge_url": None, "fast_model": None, "fast_url": None, "note": "LLM なし: 埋め込み (CPU 可) + キーワード。判定・棄却・回答は無し、根拠ページを返すだけ"},
 }

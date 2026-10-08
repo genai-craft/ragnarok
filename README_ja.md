@@ -95,7 +95,7 @@ python -m examples.demo.server --port 8608     # Web デモ
 
 ## 埋め込みモデル
 
-既定は [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (Apache-2.0、100 言語以上、768d で Matryoshka 切り詰め可、**ページ画像を同じ空間に埋め込める** — 本文の無いページは画像で埋め込むので、スキャン PDF や図表が OCR なしで検索できる)。Qwen3-Embedding-0.6B との比較では英語は誤差の範囲、日本語は少し良く、候補の天井 recall@50 が 0.98 (FinanceBench) / 1.00 (有報) に上がる。`RAGNAROK_EMBED=Qwen/Qwen3-Embedding-0.6B` で戻せる。`Engine(embed_dim=256)` で記憶域を 1/4 に (精度ほぼ同じ)。詳細: [bench/README.md](bench/README.md)。
+既定は [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (Apache-2.0、100 言語以上、768d で Matryoshka 切り詰め可、**ページ画像を同じ空間に埋め込める** — 本文の無いページは画像で埋め込むので、スキャン PDF や図表が OCR なしで検索できる)。Qwen3-Embedding-0.6B との比較では英語は誤差の範囲、日本語は少し良く、候補の天井 recall@50 が 0.98 (FinanceBench) / 1.00 (有報) に上がる。`RAGNAROK_EMBED=Qwen/Qwen3-Embedding-0.6B` で戻せる。`Engine(embed_dim=256)` で記憶域を 1/4 に (精度ほぼ同じ)。 `Engine(image_pages=True)` で全ページを画像でも埋め込むと、英語の 10-K では融合スコア (text + 0.3·image) で候補 recall@5 +3pt。日本語文書は画像が足を引くので自動で 0 にする。 詳細: [bench/README.md](bench/README.md)。
 
 ## 複数文書 (フォルダ・NAS・データレイク)
 

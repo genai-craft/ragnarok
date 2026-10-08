@@ -45,14 +45,31 @@ class Retrieval:
 
 
 class Index:
-    """1 文書の索引。pages / emb / tree。ディレクトリに保存・読込できる。"""
-    def __init__(self, name: str, pages: list[str], emb: np.ndarray, tree: Doc | None = None, meta: dict | None = None):
-        self.name, self.pages, self.emb, self.tree, self.meta = name, pages, emb, tree, meta or {}
+    """1 文書の索引。pages / emb (テキスト) / emb_img (ページ画像、任意) / tree。ディレクトリに保存・読込できる。"""
+    def __init__(self, name: str, pages: list[str], emb: np.ndarray, tree: Doc | None = None, meta: dict | None = None, emb_img: np.ndarray | None = None):
+        self.name, self.pages, self.emb, self.tree, self.meta, self.emb_img = name, pages, emb, tree, meta or {}, emb_img
+
+    @property
+    def cjk(self) -> bool:
+        t = "".join(self.pages[:5])[:4000]
+        return bool(t) and sum(1 for ch in t if "぀" <= ch <= "ヿ" or "一" <= ch <= "鿿") / max(len(t), 1) > 0.1
+
+    def sims(self, qe: np.ndarray, image_weight: float | None = None) -> np.ndarray:
+        """質問ベクトルとの類似度。画像埋め込みがあれば text + w·image (実測: 英語 w=0.3 で recall@5 +3pt、日本語は画像が弱いので w=0 = max 相当にしない)。"""
+        s = self.emb @ qe
+        if self.emb_img is None:
+            return s
+        w = (0.0 if self.cjk else 0.3) if image_weight is None else image_weight
+        if w <= 0:
+            return s
+        n = min(len(s), len(self.emb_img)); s = s.copy(); s[:n] = s[:n] + w * (self.emb_img[:n] @ qe); return s
 
     def save(self, d: str):
         os.makedirs(d, exist_ok=True)
         json.dump({"name": self.name, "pages": self.pages, "meta": self.meta}, open(f"{d}/pages.json", "w"), ensure_ascii=False)
         np.save(f"{d}/emb.npy", self.emb.astype(np.float32))
+        if self.emb_img is not None:
+            np.save(f"{d}/emb_img.npy", self.emb_img.astype(np.float32))
         if self.tree is not None:
             t = Doc(self.tree.name, [], self.tree.root); t.save(f"{d}/tree.json")
 
@@ -61,7 +78,7 @@ class Index:
         j = json.load(open(f"{d}/pages.json")); tree = None
         if os.path.exists(f"{d}/tree.json"):
             tree = Doc.load(f"{d}/tree.json"); tree.pages = j["pages"]
-        return Index(j["name"], j["pages"], np.load(f"{d}/emb.npy"), tree, j.get("meta"))
+        return Index(j["name"], j["pages"], np.load(f"{d}/emb.npy"), tree, j.get("meta"), np.load(f"{d}/emb_img.npy") if os.path.exists(f"{d}/emb_img.npy") else None)
 
     def section_path(self, p: int) -> str:
         if self.tree is None: return ""
@@ -84,7 +101,7 @@ EMBED_PRESETS = {
 class Engine:
     def __init__(self, embed_model: str | None = None, judge_url: str = "http://127.0.0.1:8310/v1", judge_model: str = "qwen27b",
                  fast_url: str = "http://127.0.0.1:8311/v1", fast_model: str = "qwen3-4b", answer_url: str | None = None, answer_model: str | None = None, device: str = "cuda",
-                 embed_dim: int | None = None, image_fallback_chars: int = 200):
+                 embed_dim: int | None = None, image_fallback_chars: int = 200, image_pages: bool = False):
         """embed_model: 既定は RAGNAROK_EMBED か google/embeddinggemma-2 (Apache-2.0、多言語、ページ画像も同じ空間に埋め込める)。
         embed_dim: Matryoshka で先頭 N 次元に切り詰める (256 で記憶域 1/3、精度ほぼ同じ)。image_fallback_chars: 本文がこの文字数未満のページ (スキャン・図) は画像で埋め込む。"""
         import torch
@@ -94,6 +111,7 @@ class Engine:
         kw = {"model_kwargs": {"torch_dtype": getattr(torch, dtype)}} if dtype else {}
         self.emb = SentenceTransformer(self.embed_model, device=device, **kw); self.emb.max_seq_length = 2048
         self.q_prompt, self.d_prompt, self.can_image, self.embed_dim, self.image_fallback_chars = qp, dp, can_img, embed_dim, image_fallback_chars
+        self.image_pages = image_pages and can_img   # True なら全ページの画像埋め込みも持つ (ページあたり +28 ms、表の多い英語文書で候補 recall@5 +3pt)
         self.judge = LLMBackend(judge_url, judge_model, mode="logprob", concurrency=16)
         self.fast = LLMBackend(fast_url, fast_model, mode="logprob", concurrency=64)
         self.answer_url = (answer_url or judge_url).rstrip("/"); self.answer_model = answer_model or judge_model
@@ -130,8 +148,16 @@ class Engine:
                 from PIL import Image
                 for i in low:
                     px = d[i].get_pixmap(matrix=pymupdf.Matrix(1.0, 1.0)); imgs.append(Image.frombytes("RGB", (px.width, px.height), px.samples))
-        emb = self.embed_docs(pages)
-        if imgs:
+        emb = self.embed_docs(pages); emb_img = None
+        if self.image_pages:
+            from PIL import Image
+            with pymupdf.open(pdf) as d:
+                allimg = []
+                for pg in d:
+                    px = pg.get_pixmap(matrix=pymupdf.Matrix(1.0, 1.0)); allimg.append(Image.frombytes("RGB", (px.width, px.height), px.samples))
+            emb_img = self.embed_images(allimg)
+            if low: emb[low] = emb_img[low]
+        elif imgs:
             emb[low] = self.embed_images(imgs)
         t = None
         if tree:
@@ -249,7 +275,7 @@ class Engine:
     async def retrieve(self, ix: Index, q: str, k: int = 5, topn: int = 50, group: int = 25, pool_each: int = 5, fast_first: bool = False, with_path: bool = False,
                        abstain_th: float = 0.5) -> Retrieval:
         qe = self.embed_query(q)
-        sims = ix.emb @ qe; order = [int(i) for i in np.argsort(-sims)[:topn]]
+        sims = ix.sims(qe); order = [int(i) for i in np.argsort(-sims)[:topn]]
         stages: list[Stage] = []; pool: list[int] = []
         if len(order) > group:
             b = self.fast if fast_first else self.judge

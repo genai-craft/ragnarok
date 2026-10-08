@@ -65,8 +65,17 @@ def sec_path(doc: Doc, p: int) -> str:
     walk(doc.root, [])
     return " > ".join(best)
 
+_embi = {}
+def sims(d, q):
+    """テキスト類似度 (+ EMB_IMG_DIR があれば画像類似度を IMG_W で加算)。"""
+    v = qemb(q); s = emb(d) @ v; idir = os.environ.get("EMB_IMG_DIR")
+    if idir:
+        if d not in _embi: _embi[d] = np.load(f"{idir}/{d}.npy")
+        n = min(len(s), len(_embi[d])); s = s.copy(); s[:n] = s[:n] + float(os.environ.get("IMG_W", "0.3")) * (_embi[d][:n] @ v)
+    return s
+
 async def ret_emb(r):
-    d = r["doc_name"]; s = emb(d) @ qemb(r["question"]); return [int(i) for i in np.argsort(-s)[:K]], 0
+    d = r["doc_name"]; s = sims(d, r["question"]); return [int(i) for i in np.argsort(-s)[:K]], 0
 
 async def decide_pages(r, backend, cand, t=None):
     """候補ページを 1 回の確率判定で採点 (選択肢 + どれでもない)。戻り値 {page: p}。"""
@@ -115,7 +124,7 @@ async def ret_rerank_mix(r, topn=50, group=25, pool_each=6):
 
 async def ret_rerank(r, backend, with_tree=False, topn=10, group=25):
     """埋め込み top-topn → 確率判定で並べ替え。topn > group なら group ずつ採点して各束の上位を集め、もう 1 回採点する (2 段)。"""
-    d = r["doc_name"]; s = emb(d) @ qemb(r["question"]); cand = [int(i) for i in np.argsort(-s)[:topn]]
+    d = r["doc_name"]; s = sims(d, r["question"]); cand = [int(i) for i in np.argsort(-s)[:topn]]
     t = lay(d) if with_tree else None
     calls = 0
     if len(cand) > group:

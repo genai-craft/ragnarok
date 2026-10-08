@@ -165,7 +165,7 @@ async def ask(doc: str, q: str, k: int = 5, think: int = 1, fast: int = 0, path:
         t0 = time.time()
         import numpy as np
         qe = eng.embed_query(q)
-        sims = ix.emb @ qe; order = [int(i) for i in np.argsort(-sims)[:50]]
+        sims = ix.sims(qe); order = [int(i) for i in np.argsort(-sims)[:50]]
         yield sse({"stage": "emb", "candidates": [{"p": p, "sim": float(sims[p]), "section": ix.section_path(p), "snip": eng.snip_for(q, ix.pages[p], 200)} for p in order], "t": time.time() - t0})
         pool = []
         if len(order) > 25:

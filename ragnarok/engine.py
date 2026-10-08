@@ -110,6 +110,7 @@ PROFILES = {
     "full":  {"judge_model": "qwen27b", "judge_url": "http://127.0.0.1:8310/v1", "fast_model": "qwen3-4b", "fast_url": "http://127.0.0.1:8311/v1", "note": "27B 判定+回答 (GPU 24GB 以上、4bit)。FinanceBench 根拠 hit@5 0.90 / 正解 0.75"},
     "light": {"judge_model": "qwen3-4b", "judge_url": "http://127.0.0.1:8311/v1", "fast_model": "qwen3-4b", "fast_url": "http://127.0.0.1:8311/v1", "note": "4B 判定+回答 (GPU 8GB 級)。判定は Qwen3.5-4B の方が良く (hit@5 0.87)、回答は Qwen3-4B の方が良い (0.64) → light2 参照"},
     "light2": {"judge_model": "qwen3.5-4b", "judge_url": "http://127.0.0.1:8313/v1", "fast_model": "qwen3.5-4b", "fast_url": "http://127.0.0.1:8313/v1", "answer_model": "qwen3-4b", "answer_url": "http://127.0.0.1:8311/v1", "note": "判定 Qwen3.5-4B + 回答 Qwen3-4B (2 モデル、計 16GB bf16)"},
+    "gguf":  {"kind": "llamacpp", "judge_model": "q354-q3", "judge_url": "http://127.0.0.1:8320/v1", "fast_model": "q354-q3", "fast_url": "http://127.0.0.1:8320/v1", "answer_model": "q34-q4", "answer_url": "http://127.0.0.1:8321/v1", "note": "llama.cpp: 判定 Qwen3.5-4B Q3_K_M (2.3GB) + 回答 Qwen3-4B Q4_K_M (2.5GB)。8k ctx で計 7.4GB、判定だけなら 3.2GB (4GB 級)。scripts/serve_gguf.sh。FinanceBench 根拠 hit@5 0.84 / 正解 0.63"},
     "tiny":  {"judge_model": "qwen3.5-2b", "judge_url": "http://127.0.0.1:8313/v1", "fast_model": "qwen3.5-2b", "fast_url": "http://127.0.0.1:8313/v1", "note": "2B 判定+回答 (GPU 4GB 級 / Apple silicon)"},
     "nollm": {"judge_model": None, "judge_url": None, "fast_model": None, "fast_url": None, "note": "LLM なし: 埋め込み (CPU 可) + キーワード。判定・棄却・回答は無し、根拠ページを返すだけ"},
 }
@@ -122,9 +123,11 @@ class Engine:
 
     def __init__(self, embed_model: str | None = None, judge_url: str = "http://127.0.0.1:8310/v1", judge_model: str = "qwen27b",
                  fast_url: str = "http://127.0.0.1:8311/v1", fast_model: str = "qwen3-4b", answer_url: str | None = None, answer_model: str | None = None, device: str = "cuda",
-                 embed_dim: int | None = None, image_fallback_chars: int = 200, image_pages: bool = False, vlm_url: str | None = None, vlm_model: str | None = None):
+                 embed_dim: int | None = None, image_fallback_chars: int = 200, image_pages: bool = False, vlm_url: str | None = None, vlm_model: str | None = None,
+                 kind: str = "vllm"):
         """embed_model: 既定は RAGNAROK_EMBED か google/embeddinggemma-2 (Apache-2.0、多言語、ページ画像も同じ空間に埋め込める)。
-        embed_dim: Matryoshka で先頭 N 次元に切り詰める (256 で記憶域 1/3、精度ほぼ同じ)。image_fallback_chars: 本文がこの文字数未満のページ (スキャン・図) は画像で埋め込む。"""
+        embed_dim: Matryoshka で先頭 N 次元に切り詰める (256 で記憶域 1/3、精度ほぼ同じ)。image_fallback_chars: 本文がこの文字数未満のページ (スキャン・図) は画像で埋め込む。
+        kind: 判定サーバーの種類。"vllm" (structured_outputs で選択肢を制約) か "llamacpp" (GBNF の grammar で制約、GGUF 量子化モデル向け)。"""
         import torch
         from sentence_transformers import SentenceTransformer
         self.embed_model = embed_model or os.environ.get("RAGNAROK_EMBED", "google/embeddinggemma-2")
@@ -136,8 +139,12 @@ class Engine:
         # スキャン (文字層の無いページ) の OCR: OpenAI 互換の VLM サーバー (例: vLLM の Qwen3-VL-8B、534 頁 9 分)。無ければ画像埋め込みだけで検索する
         self.vlm_url = (vlm_url or os.environ.get("RAGNAROK_VLM_URL") or "").rstrip("/") or None; self.vlm_model = vlm_model or os.environ.get("RAGNAROK_VLM_MODEL", "qwen3-vl-8b")
         self.profile = "custom"
-        self.judge = LLMBackend(judge_url, judge_model, mode="logprob", concurrency=16) if judge_url and judge_model else None
-        self.fast = LLMBackend(fast_url, fast_model, mode="logprob", concurrency=64) if fast_url and fast_model else self.judge
+        if kind == "llamacpp":
+            from .backends import LlamaCppBackend as Backend
+        else:
+            Backend = LLMBackend
+        self.judge = Backend(judge_url, judge_model, mode="logprob", concurrency=16 if kind == "vllm" else 8) if judge_url and judge_model else None
+        self.fast = Backend(fast_url, fast_model, mode="logprob", concurrency=64 if kind == "vllm" else 8) if fast_url and fast_model else self.judge
         self.answer_url = ((answer_url or judge_url) or "").rstrip("/") or None; self.answer_model = answer_model or judge_model
         self.http = httpx.AsyncClient(timeout=600)
 

@@ -94,16 +94,17 @@ Smaller setups: the 4B alone works for everything (re-rank hit@5 0.77 instead of
 
 ## Running without a 27B
 
-`Engine.from_profile("full" | "light" | "tiny" | "nollm")`. Measured on FinanceBench (same embeddings, same judge for scoring):
+`Engine.from_profile("full" | "light" | "gguf" | "tiny" | "nollm")`. Measured on FinanceBench (same embeddings, same judge for scoring):
 
 | profile | judge / answerer | evidence hit@5 | answer accuracy | GPU |
 |---|---|---|---|---|
 | full | Qwen3.8-27B / 27B | 0.91 | 0.73 | ~24 GB (4-bit) |
 | light | Qwen3-4B / 4B | 0.82 | 0.64 | ~8 GB |
+| gguf | Qwen3.5-4B Q3_K_M / Qwen3-4B Q4_K_M (llama.cpp) | 0.84 | 0.63 | 4.8 GB of weights (7.4 GB at 8k ctx; judge alone 3.2 GB) |
 | tiny | Qwen3.5-2B / 2B | 0.69 | 0.18 | ~4 GB |
 | nollm | none / none (returns pages) | 0.71 | — | CPU only (0.7 s/page to index) |
 
-A 4B judge is the floor — 2B decisions add nothing over embeddings. Answer quality scales with the answerer (2B → 4B → 27B: 0.18 → 0.64 → 0.73).
+A 4B judge is the floor — 2B decisions add nothing over embeddings. Answer quality scales with the answerer (2B → 4B → 27B: 0.18 → 0.64 → 0.73). Quantization is nearly free at 4B: Qwen3.5-4B keeps its judge quality down to Q3_K_M (2.3 GB, hit@5 0.84; Q2 drops to 0.75) and Qwen3-4B Q4_K_M answers as well as bf16 — the `gguf` profile pairs the two on llama.cpp (`scripts/serve_gguf.sh`). Full table in [bench/README.md](bench/README.md).
 
 ## Embedding model
 

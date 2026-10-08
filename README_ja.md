@@ -95,16 +95,17 @@ python -m examples.demo.server --port 8608     # Web デモ
 
 ## 27B が無い環境で
 
-`Engine.from_profile("full" | "light" | "tiny" | "nollm")`。FinanceBench で実測 (埋め込み・採点は同じ):
+`Engine.from_profile("full" | "light" | "gguf" | "tiny" | "nollm")`。FinanceBench で実測 (埋め込み・採点は同じ):
 
 | profile | 判定 / 回答 | 根拠 hit@5 | 回答正解率 | GPU |
 |---|---|---|---|---|
 | full | Qwen3.8-27B / 27B | 0.91 | 0.73 | 24GB 級 (4bit) |
 | light | Qwen3-4B / 4B | 0.82 | 0.64 | 8GB 級 |
+| gguf | Qwen3.5-4B Q3_K_M / Qwen3-4B Q4_K_M (llama.cpp) | 0.84 | 0.63 | 重み 4.8GB (8k ctx で 7.4GB、判定だけなら 3.2GB) |
 | tiny | Qwen3.5-2B / 2B | 0.69 | 0.18 | 4GB 級 |
 | nollm | なし / なし (根拠ページを返す) | 0.71 | — | CPU のみ可 (索引 0.7 秒/頁) |
 
-判定役は 4B が下限 (2B の判定は埋め込み順と変わらない)。回答の質は回答役の大きさに比例する (2B → 4B → 27B で 0.18 → 0.64 → 0.73)。
+判定役は 4B が下限 (2B の判定は埋め込み順と変わらない)。回答の質は回答役の大きさに比例する (2B → 4B → 27B で 0.18 → 0.64 → 0.73)。4B の量子化はほぼ無料: Qwen3.5-4B は Q3_K_M (2.3GB) まで判定の質が保たれ (hit@5 0.84、Q2 で 0.75 に落ちる)、Qwen3-4B Q4_K_M の回答は bf16 と同等。`gguf` profile はこの 2 つを llama.cpp で組む (`scripts/serve_gguf.sh`)。表は [bench/README.md](bench/README.md)。
 
 ## 埋め込みモデル
 

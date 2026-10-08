@@ -91,6 +91,13 @@ class Index:
         return " > ".join(best)
 
 
+def _in_loop() -> bool:
+    try:
+        asyncio.get_running_loop(); return True
+    except RuntimeError:
+        return False
+
+
 EMBED_PRESETS = {
     # name: (query prompt, document prompt, dtype, 画像を埋め込めるか)
     "google/embeddinggemma-2": ("query", "document", "bfloat16", True),
@@ -101,7 +108,7 @@ EMBED_PRESETS = {
 class Engine:
     def __init__(self, embed_model: str | None = None, judge_url: str = "http://127.0.0.1:8310/v1", judge_model: str = "qwen27b",
                  fast_url: str = "http://127.0.0.1:8311/v1", fast_model: str = "qwen3-4b", answer_url: str | None = None, answer_model: str | None = None, device: str = "cuda",
-                 embed_dim: int | None = None, image_fallback_chars: int = 200, image_pages: bool = False):
+                 embed_dim: int | None = None, image_fallback_chars: int = 200, image_pages: bool = False, vlm_url: str | None = None, vlm_model: str | None = None):
         """embed_model: 既定は RAGNAROK_EMBED か google/embeddinggemma-2 (Apache-2.0、多言語、ページ画像も同じ空間に埋め込める)。
         embed_dim: Matryoshka で先頭 N 次元に切り詰める (256 で記憶域 1/3、精度ほぼ同じ)。image_fallback_chars: 本文がこの文字数未満のページ (スキャン・図) は画像で埋め込む。"""
         import torch
@@ -112,10 +119,29 @@ class Engine:
         self.emb = SentenceTransformer(self.embed_model, device=device, **kw); self.emb.max_seq_length = 2048
         self.q_prompt, self.d_prompt, self.can_image, self.embed_dim, self.image_fallback_chars = qp, dp, can_img, embed_dim, image_fallback_chars
         self.image_pages = image_pages and can_img   # True なら全ページの画像埋め込みも持つ (ページあたり +28 ms、表の多い英語文書で候補 recall@5 +3pt)
+        # スキャン (文字層の無いページ) の OCR: OpenAI 互換の VLM サーバー (例: vLLM の Qwen3-VL-8B、534 頁 9 分)。無ければ画像埋め込みだけで検索する
+        self.vlm_url = (vlm_url or os.environ.get("RAGNAROK_VLM_URL") or "").rstrip("/") or None; self.vlm_model = vlm_model or os.environ.get("RAGNAROK_VLM_MODEL", "qwen3-vl-8b")
         self.judge = LLMBackend(judge_url, judge_model, mode="logprob", concurrency=16)
         self.fast = LLMBackend(fast_url, fast_model, mode="logprob", concurrency=64)
         self.answer_url = (answer_url or judge_url).rstrip("/"); self.answer_model = answer_model or judge_model
         self.http = httpx.AsyncClient(timeout=600)
+
+    # ---------------- OCR (VLM) ----------------
+    async def ocr_images(self, images, concurrency: int = 16) -> list[str]:
+        """ページ画像を VLM に読ませて本文にする (表は ' | ' 区切りの行)。"""
+        import base64, io
+        sem = asyncio.Semaphore(concurrency)
+        def b64(img):
+            buf = io.BytesIO(); img.convert("RGB").save(buf, format="JPEG", quality=85); return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+        async def one(img):
+            async with sem:
+                try:
+                    r = await self.http.post(f"{self.vlm_url}/chat/completions", json={"model": self.vlm_model, "max_tokens": 1800, "temperature": 0, "messages": [{"role": "user", "content": [
+                        {"type": "image_url", "image_url": {"url": b64(img)}}, {"type": "text", "text": "Transcribe all the text on this page exactly as printed, preserving tables as rows (cells separated by ' | '). Output the text only."}]}]})
+                    return r.json()["choices"][0]["message"]["content"]
+                except Exception:
+                    return ""
+        return await asyncio.gather(*[one(im) for im in images])
 
     # ---------------- 埋め込み ----------------
     def _norm(self, v: np.ndarray) -> np.ndarray:
@@ -148,6 +174,11 @@ class Engine:
                 from PIL import Image
                 for i in low:
                     px = d[i].get_pixmap(matrix=pymupdf.Matrix(1.0, 1.0)); imgs.append(Image.frombytes("RGB", (px.width, px.height), px.samples))
+        if low and self.vlm_url:
+            ocr = asyncio.run(self.ocr_images(imgs)) if not _in_loop() else None
+            if ocr:
+                for i, t in zip(low, ocr):
+                    if t and len(t.strip()) > 20: pages[i] = t
         emb = self.embed_docs(pages); emb_img = None
         if self.image_pages:
             from PIL import Image

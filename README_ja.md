@@ -121,6 +121,17 @@ ragnarok down
 
 **スキャン PDF**: 文字層の無いページは画像で埋め込み (英語のスキャンは OCR なしで recall@5 0.79)、`Engine(vlm_url=...)` に OpenAI 互換の VLM (vLLM の Qwen3-VL-8B、バッチで 1 頁 1 秒) を与えると索引時に OCR する。1960〜80 年代の公文書で回答正解率 0.75 (英) / 0.79 (日)。詳細: [bench/README.md](bench/README.md)。
 
+## 音声 (会議の録音など)
+
+EmbeddingGemma 2 は音声も文字と同じ空間に埋め込むので、書き起こしなしで文字の質問から録音の該当区間を引けます:
+
+```python
+ix = eng.index_audio("meeting.wav")                 # 20 秒区間を 15 秒ずらし。埋め込みは音声そのもの
+eng.search_audio(ix, "予算を決めたのはいつ？", k=3)   # -> [{"start": 300.0, "end": 320.0, "score": 0.68, ...}]
+```
+
+日本語の読み上げ (FLEURS、4 分の録音 3 本に 60 文) で、その文を含む区間が 1 位に来る割合 93% (20 秒区間)、上位 3 以内 98% (`bench/audio_search_check.py`)。`transcriber=ragnarok.audio.whisper_transcriber()` を渡すと区間ごとに書き起こし (既定 kotoba-whisper) も付き、本文つきの索引として通常の `retrieve` / `answer` が使えます。
+
 ## 複数文書 (フォルダ・NAS・データレイク)
 
 ```bash

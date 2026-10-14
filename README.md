@@ -120,6 +120,17 @@ Default is [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemm
 
 **Scanned PDFs**: pages without a text layer are embedded as images (English scans retrieve at recall@5 0.79 with no OCR at all), and if you give `Engine(vlm_url=...)` an OpenAI-compatible VLM (e.g. Qwen3-VL-8B on vLLM, ~1 s/page batched) they are OCR'd at index time — on 1960s–80s government scans that gives answer accuracy 0.75 (EN) / 0.79 (JA) with the usual text pipeline. Details: [bench/README.md](bench/README.md).
 
+## Audio recordings (meetings, calls)
+
+EmbeddingGemma 2 embeds audio into the same space as text, so a recording can be searched by a text question with no transcription step:
+
+```python
+ix = eng.index_audio("meeting.wav")                 # 20 s segments, 15 s hop; embeddings are the audio itself
+eng.search_audio(ix, "when did we decide the budget?", k=3)   # -> [{"start": 300.0, "end": 320.0, "score": 0.68, ...}]
+```
+
+Measured on Japanese read speech (FLEURS, 60 sentences in three 4-minute recordings): the segment containing the sentence is top-1 in 93% of queries (20 s segments) and top-3 in 98% (`bench/audio_search_check.py`). Pass `transcriber=ragnarok.audio.whisper_transcriber()` to also transcribe each segment (kotoba-whisper by default); the index then has text pages and the usual `retrieve` / `answer` work on it.
+
 ## Many documents (a folder, a NAS share, a data lake)
 
 ```bash

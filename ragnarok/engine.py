@@ -284,6 +284,34 @@ class Engine:
     def index_pages(self, name: str, pages: list[str]) -> Index:
         return Index(name, pages, self.embed_docs(pages), None, {"pages": len(pages), "embed": self.embed_model})
 
+    # ---------------- 音声 ----------------
+    def embed_audio(self, segs: list[np.ndarray]) -> np.ndarray:
+        """音声区間 (16 kHz mono float32) を文字と同じ空間に埋め込む。接頭辞は付けない (EmbeddingGemma 2 の流儀)。"""
+        if not self.can_image:
+            raise ValueError(f"{self.embed_model} は音声を埋め込めない (google/embeddinggemma-2 を使う)")
+        return self._norm(self.emb.encode([{"audio": s} for s in segs], batch_size=4, normalize_embeddings=True, show_progress_bar=False))
+
+    def index_audio(self, path: str, name: str | None = None, seg_sec: float = 20.0, hop_sec: float = 15.0, transcriber=None) -> Index:
+        """録音を seg_sec 秒の区間 (hop_sec ずらし) に切って索引にする。
+        transcriber (list[np.ndarray] -> list[str]、例: ragnarok.audio.whisper_transcriber()) を渡すと本文は書き起こし、埋め込みも本文で、
+        通常の retrieve / answer がそのまま使える。渡さなければ本文は時刻の札だけで、埋め込みは音声そのもの (search_audio で引く)。"""
+        from .audio import SR, fmt_ts, load_audio, segment_bounds
+        x = load_audio(path); bounds = segment_bounds(len(x), seg_sec, hop_sec); segs = [x[s:e] for s, e in bounds]
+        tags = [f"[{fmt_ts(s / SR)}-{fmt_ts(e / SR)}]" for s, e in bounds]
+        if transcriber is not None:
+            pages = [f"{t} {tx}" for t, tx in zip(tags, transcriber(segs))]; emb = self.embed_docs(pages)
+        else:
+            pages, emb = tags, self.embed_audio(segs)
+        meta = {"pages": len(pages), "embed": self.embed_model, "source": path, "format": "audio", "unit": "segment", "kind": "audio recording",
+                "segments": [[round(s / SR, 2), round(e / SR, 2)] for s, e in bounds], "transcribed": transcriber is not None, "duration": round(len(x) / SR, 2)}
+        return Index(name or os.path.basename(path).rsplit(".", 1)[0], pages, emb, None, meta)
+
+    def search_audio(self, ix: Index, q: str, k: int = 5) -> list[dict]:
+        """LLM を使わず埋め込みだけで区間を引く (書き起こしの無い音声索引向け)。[{page, start, end, label, score}] を類似度順に返す。"""
+        s = ix.sims(self.embed_query(q)); segs = ix.meta.get("segments") or []
+        return [{"page": int(p), "start": segs[p][0] if p < len(segs) else None, "end": segs[p][1] if p < len(segs) else None, "label": ix.pages[p], "score": float(s[p])}
+                for p in np.argsort(-s)[:k]]
+
     # ---------------- 検索 ----------------
     @staticmethod
     def _snip(t: str, n: int = 300) -> str:

@@ -119,6 +119,8 @@ ragnarok down
 
 既定は [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) (Apache-2.0、100 言語以上、768d で Matryoshka 切り詰め可、**ページ画像を同じ空間に埋め込める** — 本文の無いページは画像で埋め込むので、スキャン PDF や図表が OCR なしで検索できる)。Qwen3-Embedding-0.6B との比較では英語は誤差の範囲、日本語は少し良く、候補の天井 recall@50 が 0.98 (FinanceBench) / 1.00 (有報) に上がる。`RAGNAROK_EMBED=Qwen/Qwen3-Embedding-0.6B` で戻せる。`Engine(embed_dim=256)` で記憶域を 1/4 に (精度ほぼ同じ)。 `Engine(image_pages=True)` で全ページを画像でも埋め込むと、英語の 10-K では融合スコア (text + 0.3·image) で候補 recall@5 +3pt。日本語文書は画像が足を引くので自動で 0 にする。 詳細: [bench/README.md](bench/README.md)。
 
+**NVIDIA Nemotron 3.5 Embed** (OpenMDW-1.1、商用可) も `RAGNAROK_EMBED=nvidia/Nemotron-3.5-Embed-1B-BF16` (または `-8B-BF16`、transformers 5.20 以上) で選べる。手元のベンチでは 1B が本文の索引速度は EmbeddingGemma-2 と同じで全条件で上回り、特に日本語と画像で差が大きい (有報の画像のみ recall@5 0.56 → 0.88、日本語スキャンの画像のみ 0.58 → 0.83)。8B は FinanceBench で埋め込みだけで recall@5 0.90 (これまで 27B の 2 段判定で出していた水準)。Nemotron Rerank 8B を最初の並べ替えに使うと根拠 hit@5 が 0.91 → 0.96〜0.97 に上がり 27B の呼び出しは 3 回 → 1 回になるが、同じ会社の別年度の棄却は弱くなる。Nemotron Parse はスキャンの OCR を VLM の 6〜7 倍の速さで同程度の品質に読む。数字と注意点: [bench/README.md](bench/README.md)。
+
 **スキャン PDF**: 文字層の無いページは画像で埋め込み (英語のスキャンは OCR なしで recall@5 0.79)、`Engine(vlm_url=...)` に OpenAI 互換の VLM (vLLM の Qwen3-VL-8B、バッチで 1 頁 1 秒) を与えると索引時に OCR する。1960〜80 年代の公文書で回答正解率 0.75 (英) / 0.79 (日)。詳細: [bench/README.md](bench/README.md)。
 
 ## 音声 (会議の録音など)

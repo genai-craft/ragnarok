@@ -102,6 +102,9 @@ EMBED_PRESETS = {
     # name: (query prompt, document prompt, dtype, 画像を埋め込めるか)
     "google/embeddinggemma-2": ("query", "document", "bfloat16", True),
     "Qwen/Qwen3-Embedding-0.6B": ("query", None, None, False),
+    # NVIDIA Nemotron 3.5 Embed (OpenMDW-1.1、商用可)。ページ画像と本文を 1 つの文書として埋め込める。transformers 5.20 以上 (5.17〜5.19 は画像で誤る)
+    "nvidia/Nemotron-3.5-Embed-1B-BF16": ("query", "document", "bfloat16", True),
+    "nvidia/Nemotron-3.5-Embed-8B-BF16": ("query", "document", "bfloat16", True),
 }
 
 
@@ -136,7 +139,11 @@ class Engine:
         self.embed_model = embed_model or os.environ.get("RAGNAROK_EMBED", "google/embeddinggemma-2")
         qp, dp, dtype, can_img = EMBED_PRESETS.get(self.embed_model, ("query", None, None, False))
         kw = {"model_kwargs": {"torch_dtype": getattr(torch, dtype)}} if dtype else {}
-        self.emb = SentenceTransformer(self.embed_model, device=device, **kw); self.emb.max_seq_length = 2048
+        if self.embed_model.startswith("nvidia/Nemotron"):
+            kw = {"trust_remote_code": True, "model_kwargs": {"dtype": getattr(torch, dtype), "attn_implementation": "sdpa"}}
+        self.emb = SentenceTransformer(self.embed_model, device=device, **kw)
+        if not self.embed_model.startswith("nvidia/Nemotron"):
+            self.emb.max_seq_length = 2048
         self.q_prompt, self.d_prompt, self.can_image, self.embed_dim, self.image_fallback_chars = qp, dp, can_img, embed_dim, image_fallback_chars
         self.image_pages = image_pages and can_img   # True なら全ページの画像埋め込みも持つ (ページあたり +28 ms、表の多い英語文書で候補 recall@5 +3pt)
         # スキャン (文字層の無いページ) の OCR: OpenAI 互換の VLM サーバー (例: vLLM の Qwen3-VL-8B、534 頁 9 分)。無ければ画像埋め込みだけで検索する

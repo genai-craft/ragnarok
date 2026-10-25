@@ -106,6 +106,43 @@ async def ret_xenc(r, topn=50):
     return [cand[i] for i in order[:K]], 0
 XENC_T = []
 
+_nrr = None; NRR_T = []; NRR_TOP = {}; _NRR_LOCK = None; _pdfs = {}
+def _nrr_model():
+    """NVIDIA Nemotron-3.5-Rerank-8B (OpenMDW-1.1)。cross-encoder で質問とページの組ごとに生の点数 (確率でも「該当なし」でもない)。"""
+    global _nrr
+    if _nrr is None:
+        import torch
+        from sentence_transformers import CrossEncoder
+        _nrr = CrossEncoder("nvidia/Nemotron-3.5-Rerank-8B-BF16", device="cuda", trust_remote_code=True,
+                            model_kwargs={"dtype": torch.bfloat16, "attn_implementation": "sdpa"})
+    return _nrr
+def page_image(d, p, long=1120):
+    import pymupdf
+    from PIL import Image
+    if d not in _pdfs: _pdfs[d] = pymupdf.open(f"{FB}/repo/pdfs/{d}.pdf")
+    pg = _pdfs[d][p]; z = long / max(pg.rect.width, pg.rect.height); px = pg.get_pixmap(matrix=pymupdf.Matrix(z, z))
+    return Image.frombytes("RGB", (px.width, px.height), px.samples)
+async def ret_nrerank(r, topn=50, then=None, kind="text", keep=10):
+    """埋め込み top-topn (ragnarok と同じ 1 段目) を Nemotron Rerank で並べ替え。then=backend なら上位 keep を確率判定でもう 1 段 (該当なし込み)。"""
+    global _NRR_LOCK
+    _NRR_LOCK = _NRR_LOCK or asyncio.Lock()
+    d = r["doc_name"]; s = sims(d, r["question"]); cand = [int(i) for i in np.argsort(-s)[:topn]]
+    n_img = min(len(cand), 10**9)
+    if kind == "text":
+        docs = [pages(d)[p][:6000] or " " for p in cand]
+    else:
+        docs = [{"image": page_image(d, p), "text": pages(d)[p][:6000]} for p in cand]
+    async with _NRR_LOCK:                                   # GPU は 1 問ずつ
+        t0 = time.perf_counter()
+        ranked = await asyncio.to_thread(lambda: _nrr_model().rank(r["question"], docs, batch_size=8 if kind == "text" else 2, show_progress_bar=False))
+        NRR_T.append(time.perf_counter() - t0)
+    order = [cand[x["corpus_id"]] for x in ranked]
+    NRR_TOP[r["financebench_id"]] = [float(x["score"]) for x in ranked[:5]]
+    if then is None:
+        return order[:K], 0
+    sc = await decide_pages(r, then, order[:keep])
+    return [p for p, _ in sorted(sc.items(), key=lambda x: -x[1])[:K]], 1
+
 async def ret_llmrank(r, topn=25):
     """既存手法: 生成型の listwise rerank (RankGPT 方式)。27B に候補 25 ページの順位を JSON で書かせる。"""
     d = r["doc_name"]; s = emb(d) @ qemb(r["question"]); cand = [int(i) for i in np.argsort(-s)[:topn]]
@@ -216,6 +253,10 @@ async def run(method):
             elif method == "rerank27b_2st+tree": pgs, calls = await ret_rerank(r, B27, topn=50, with_tree=True)
             elif method == "rerank_mix": pgs, calls = await ret_rerank_mix(r)
             elif method == "xenc50": pgs, calls = await ret_xenc(r, 50)
+            elif method == "nrr50": pgs, calls = await ret_nrerank(r, 50)
+            elif method == "nrr50_27b": pgs, calls = await ret_nrerank(r, 50, then=B27)
+            elif method == "nrr50it": pgs, calls = await ret_nrerank(r, 50, kind="it")
+            elif method == "nrr50it_27b": pgs, calls = await ret_nrerank(r, 50, then=B27, kind="it")
             elif method == "llmrank27b": pgs, calls = await ret_llmrank(r, 25)
             elif method == "rerank27b_3st": pgs, calls = await ret_rerank(r, B27, topn=100, group=25)
             elif method == "rerank27b+tree": pgs, calls = await ret_rerank(r, B27, with_tree=True)
@@ -240,6 +281,9 @@ async def run(method):
     print(f"{method:16s}{' think' if THINK else ''} k={K} 根拠 hit@1 {sum(x['hit1'] for x in res)/n:.3f} hit@{K} {sum(x['hit'] for x in res)/n:.3f} 正解率 {sum(x['correct'] for x in res)/n:.3f} n={n} wall {time.time()-t0:.0f}s | "
           + " ".join(f"{k[:8]}:{sum(v)/len(v):.2f}" for k, v in by.items()), flush=True)
     if XENC_T: print(f"   cross-encoder 1 問あたり {np.mean(XENC_T):.2f}s (50 候補)", flush=True)
+    if NRR_T: print(f"   Nemotron Rerank 1 問あたり {np.mean(NRR_T):.2f}s (50 候補)", flush=True); NRR_T.clear()
+    if NRR_TOP:
+        for x in res: x["nrr_top"] = NRR_TOP.get(x["id"])
     json.dump(res, open(f"{FB}/eval_{method}_k{K}{'_think' if THINK else ''}{os.environ.get('EVAL_TAG','')}.json", "w"), ensure_ascii=False, indent=1)
 
 async def main():

@@ -378,3 +378,27 @@ FinanceBench 150 問。回答器はすべて 27B 思考あり。「Rerank → 27
 1. **Embed 1B を GPU 環境の既定に**: 本文の速さは同じで、日本語・画像・スキャンが大きく上がる。CPU だけの段 (nollm) は EmbeddingGemma-2 のまま。8B は精度最優先の段 (FinanceBench で埋め込みだけで 27B 2 段判定並み)。`RAGNAROK_EMBED=nvidia/Nemotron-3.5-Embed-1B-BF16` で選べるようにした (ragnarok/engine.py の EMBED_PRESETS)。
 2. **Rerank を 1 段目の 27B 判定の代わりに**: 根拠 hit@5 が上がり、27B の呼び出しが 3 回 → 1 回。ただし棄却 (同じ会社の別年度) が弱くなるので、27B に渡す頁数か閾値の調整が要る。
 3. **Parse はスキャンの OCR の置き換え候補** (速さ 6〜7 倍、VRAM 2 GB 弱、品質同程度)。ただし画像埋め込み + 画像 Rerank で検索は OCR なしでも足りるので、OCR は「回答を文字で作るため」だけになる。文字層のある PDF の回答には効かない。
+
+### 言箱 (kotohako) では何を使うか — VRAM が厳しい前提 (2026-10-27)
+
+言箱の製品構成は 3080 20GB 1 枚に 27B を常駐させ、2 台目も 27B と画像・音声で GPU が埋まる。「ファイルに質問」(言箱の ragnarok) は
+GPU を使わず、埋め込みを CPU の llama-cpp-python (GGUF) で回している。この前提で選んだ結論:
+
+- **使う: Nemotron-3.5-Embed-1B の本文部分を GGUF (Q8) で CPU に**。Nemotron 3.5 Embed は本文の埋め込みが前世代 (Nemotron-3-Embed-1B) と同一なので、本文部分だけを GGUF にすれば画像の部品なしで同じ精度が出る。
+- 使わない: Embed 8B・Rerank 8B (17 GB)、ページ画像の埋め込み (GPU 前提)、Parse (CPU だと 1 頁 20〜24 秒、GPU なら 0.15 秒・2 GB 弱。解析機の GPU に余りが出たら再検討)。
+
+言箱と同じ経路 (GGUF + llama.cpp、1 件ずつ、言箱の前置き) での比較 (bench/gguf_embed_eval.py):
+
+| | Qwen3-Embedding-0.6B Q8 (言箱の今) | Nemotron-3.5-Embed-1B Q8 |
+|---|---|---|
+| 有報: recall@1 / @5 / @10 | 0.45 / 0.78 / 0.85 | **0.57 / 0.89 / 0.96** |
+| 有報: 横断 26 冊の根拠@5 | 0.38 | **0.65** |
+| FinanceBench: recall@1 / @5 / @10 | 0.37 / 0.65 / 0.79 | **0.43 / 0.74 / 0.85** |
+| FinanceBench: 横断 84 冊の根拠@5 | 0.53 | **0.67** |
+| CPU (EPYC 9355、16 / 8 スレッド、1 頁 ~1,000 トークン) | 0.80 / 1.37 秒/頁 | 1.36 / 2.48 秒/頁 |
+
+- GGUF は公式の重みから自前で変換 (scripts/convert_nemotron_embed_gguf.sh)。元のモデルとの一致: 余弦 0.9998、検索の 1 位 100%。
+  有志の GGUF (maternion) も同じ精度だが、製品で配るので出どころを自分で持つ。BOS/EOS を付ける変換だと余弦 0.99・1 位一致 94% に落ちる。
+- **罠: llama-server で双方向の埋め込みモデルを同時に流すと (--parallel > 1)、別の文書が混ざって壊れる** (余弦が最小 0.67、FinanceBench の recall@5 が 0.74 → 0.60)。
+  1 件ずつなら正しい。llama-cpp-python はまとめて渡しても正しい。
+- 言箱への組み込み: toriumi/kotohako_os のブランチ `ragnarok/nemotron-embed` (モデルごとの前置き・集約、モデルが変わったら起動時に索引を裏で作り直す、途中から再開)。配信は言箱の手順で。

@@ -131,7 +131,7 @@ ix = eng.index_audio("meeting.wav")                 # 20 s segments, 15 s hop; e
 eng.search_audio(ix, "when did we decide the budget?", k=3)   # -> [{"start": 300.0, "end": 320.0, "score": 0.68, ...}]
 ```
 
-Measured on Japanese read speech (FLEURS, 60 sentences in three 4-minute recordings): the segment containing the sentence is top-1 in 93% of queries (20 s segments) and top-3 in 98% (`bench/audio_search_check.py`). Pass `transcriber=ragnarok.audio.whisper_transcriber()` to also transcribe each segment (kotoba-whisper by default); the index then has text pages and the usual `retrieve` / `answer` work on it.
+Measured on Japanese read speech (FLEURS, 60 sentences in three 4-minute recordings): the segment containing the sentence is top-1 in 93% of queries (20 s segments) and top-3 in 98% (`bench/audio_search_check.py`). Pass `transcriber=ragnarok.audio.whisper_transcriber()` (kotoba-whisper) or `ragnarok.audio.haas_transcriber()` (Haas-ja-v1.0, Apache-2.0, GPU; about half the errors of kotoba-whisper on Japanese and a custom vocabulary for names) to also transcribe each segment; the index then has text pages and the usual `retrieve` / `answer` work on it.
 
 ## Many documents (a folder, a NAS share, a data lake)
 

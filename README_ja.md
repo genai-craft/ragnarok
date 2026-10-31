@@ -132,7 +132,7 @@ ix = eng.index_audio("meeting.wav")                 # 20 秒区間を 15 秒ず�
 eng.search_audio(ix, "予算を決めたのはいつ？", k=3)   # -> [{"start": 300.0, "end": 320.0, "score": 0.68, ...}]
 ```
 
-日本語の読み上げ (FLEURS、4 分の録音 3 本に 60 文) で、その文を含む区間が 1 位に来る割合 93% (20 秒区間)、上位 3 以内 98% (`bench/audio_search_check.py`)。`transcriber=ragnarok.audio.whisper_transcriber()` を渡すと区間ごとに書き起こし (既定 kotoba-whisper) も付き、本文つきの索引として通常の `retrieve` / `answer` が使えます。
+日本語の読み上げ (FLEURS、4 分の録音 3 本に 60 文) で、その文を含む区間が 1 位に来る割合 93% (20 秒区間)、上位 3 以内 98% (`bench/audio_search_check.py`)。`transcriber=ragnarok.audio.whisper_transcriber()` (kotoba-whisper) か `ragnarok.audio.haas_transcriber()` (Haas-ja-v1.0、Apache-2.0、GPU。日本語で kotoba の半分の誤り、固有名詞の語彙つき) を渡すと区間ごとに書き起こしも付き、本文つきの索引として通常の `retrieve` / `answer` が使えます。
 
 ## 複数文書 (フォルダ・NAS・データレイク)
 

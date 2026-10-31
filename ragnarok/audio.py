@@ -49,3 +49,22 @@ def whisper_transcriber(model: str = "kotoba-tech/kotoba-whisper-v2.0", device: 
         return [o["text"].strip() for o in out]
 
     return run
+
+
+def haas_transcriber(model_id: str = "third-intelligence/Haas-ja-v1.0", vocabulary: dict[str, list[str]] | None = None, batch_size: int = 32):
+    """Haas-ja-v1.0 (Third Intelligence、Parakeet-TDT + KDA、Apache-2.0、GPU 専用) で区間ごとに書き起こす callable を返す。
+    kotoba-whisper より正確で速い (2026-11-01 実測: FLEURS ja 漢字かな CER 3.75% 対 6.71%、1 発話 30 ms)。
+    vocabulary は {"表記": ["読み", ...]} (固有名詞の綴りを固定する)。入れ方: pip install "haas-asr @ git+https://github.com/third-intelligence/Haas-ASR.git"。"""
+    import haas_asr
+
+    model = haas_asr.load_model(model_id)
+    vocab = haas_asr.Vocabulary({k: ([v] if isinstance(v, str) else list(v)) for k, v in vocabulary.items()}) if vocabulary else None
+
+    def run(segs: list[np.ndarray]) -> list[str]:
+        out: list[str] = []
+        for i in range(0, len(segs), batch_size):
+            b = [np.asarray(s, dtype=np.float32).reshape(-1) for s in segs[i:i + batch_size]]
+            out += haas_asr.transcribe(model, b, vocabulary=vocab) if vocab is not None else [o.text for o in model.transcribe(b)]
+        return [(t or "").strip() for t in out]
+
+    return run
